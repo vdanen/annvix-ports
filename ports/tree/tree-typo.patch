@@ -1,0 +1,16 @@
+--- tree-1.4/tree.1.orig	2002-02-21 16:46:13.000000000 +0100
++++ tree-1.4/tree.1		2002-05-14 16:01:38.000000000 +0200
+@@ -138,11 +138,11 @@
+ .TP
+ .B -q
+ Print non-printable characters in filenames as question marks instead of the default
+-carrot notation.
++carret notation.
+ .PP
+ .TP
+ .B -N
+-Print non-printable characters as is instead of the default carrot notation.
++Print non-printable characters as is instead of the default carret notation.
+ .PP
+ .TP
+ .B -t
