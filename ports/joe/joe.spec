@@ -1,6 +1,8 @@
+# $Id$
+
 %define name	joe
 %define version	3.0
-%define release	3sls
+%define release	4sls
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -16,7 +18,7 @@ License:	GPL
 URL:		http://sourceforge.net/projects/joe-editor
 Group:		Editors
 Source:		http://heanet.dl.sourceforge.net/sourceforge/joe-editor/%{name}-%{version}.tar.gz
-Patch1:		joe-2.9.8-gnoterm.patch.bz2
+Patch1:		joe-2.9.8-gnoterm.patch
 
 BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root
 BuildRequires:	ncurses-devel
@@ -55,6 +57,9 @@ export CFLAGS="$RPM_OPT_FLAGS -DUSE_LOCALE"
 %{_mandir}/man1/*
 
 %changelog
+* Sat May 29 2004 Vincent Danen <vdanen@opensls.org> 3.0-4sls
+- ports patches should not be compressed
+
 * Sat May 29 2004 Vincent Danen <vdanen@opensls.org> 3.0-3sls
 - we need to set %%_docdir as well
 
