@@ -1,11 +1,12 @@
 %define name	joe
 %define version	3.0
-%define release	2sls
+%define release	3sls
 
-%define _prefix	/usr/local
-%define _mandir /usr/local/share/man
-%define _infodir /usr/local/share/info
-%define _sysconfdir /usr/local/etc
+%define _prefix		/usr/local
+%define _mandir		/usr/local/share/man
+%define _infodir	/usr/local/share/info
+%define _sysconfdir	/usr/local/etc
+%define _docdir		/usr/local/share/doc
 
 Summary:	An easy to use, modeless text editor
 Name:		%{name}
@@ -54,6 +55,9 @@ export CFLAGS="$RPM_OPT_FLAGS -DUSE_LOCALE"
 %{_mandir}/man1/*
 
 %changelog
+* Sat May 29 2004 Vincent Danen <vdanen@opensls.org> 3.0-3sls
+- we need to set %%_docdir as well
+
 * Fri May 28 2004 Vincent Danen <vdanen@opensls.org> 3.0-2sls
 - don't set sysconfdir to sysconfdir/joe or we end up with
   /usr/local/etc/joe/joe
