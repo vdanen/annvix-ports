@@ -1,6 +1,6 @@
 %define name	joe
 %define version	3.0
-%define release	1sls
+%define release	2sls
 
 %define _prefix	/usr/local
 %define _mandir /usr/local/share/man
@@ -36,12 +36,12 @@ probably install joe because it is very easy to use.
 
 %build
 export CFLAGS="$RPM_OPT_FLAGS -DUSE_LOCALE"
-%configure2_5x --sysconfdir=%{_sysconfdir}/joe
+%configure2_5x
 %make
 
 %install
 [ -n "%{buildroot}" -a "%{buildroot}" != / ] && rm -rf %{buildroot}
-%makeinstall sysconfdir=$RPM_BUILD_ROOT%{_sysconfdir}/joe transform=''
+%makeinstall transform=''
 
 %clean
 [ -n "%{buildroot}" -a "%{buildroot}" != / ] && rm -rf %{buildroot}
@@ -54,6 +54,10 @@ export CFLAGS="$RPM_OPT_FLAGS -DUSE_LOCALE"
 %{_mandir}/man1/*
 
 %changelog
+* Fri May 28 2004 Vincent Danen <vdanen@opensls.org> 3.0-2sls
+- don't set sysconfdir to sysconfdir/joe or we end up with
+  /usr/local/etc/joe/joe
+
 * Fri May 28 2004 Vincent Danen <vdanen@opensls.org> 3.0-1sls
 - OpenSLS ports
 
