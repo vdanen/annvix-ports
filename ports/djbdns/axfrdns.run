@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# this runs axfrdns under supervise
+
+# for some reason, envdir doesn't seem to work properly
+IP=`head -1 ./env/IP`
+ROOT=`head -1 ./env/ROOT`
+
+exec 2>&1
+
+exec /sbin/chpst -m 300000 -e ./env -U axfrdns \
+  /sbin/tcpsvd -v -l $IP -i ./peers "$IP" 53 /usr/local/bin/axfrdns

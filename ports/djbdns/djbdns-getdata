@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# This script will obtain zone information from BIND servers and store it in
+# a format useful to djbdns
+
+# convention:
+#   djbdns-getdata [domain] [dns server]
+# ie:
+#   djbdns-getdata mydomain.com dns1.mydomain.com
+
+cd /var/djbdns/tinydns/root
+tcpclient $2 53 axfr-get $1 zone-$1 zone-$1.tmp
+
+# for retrieving in-addr.arpa use something like this:
+#
+# tcpclient $2 53 axfr-get 8.1.in-addr.arpa zone-8 zone-8.tmp

@@ -1,0 +1,5 @@
+# If this is a secondary djbdns server, data should be copied from the
+# primary djbdns server using rsync and ssh and should not be modified on
+# this system.  Uncomment the following line to protect data.cdb by stopping
+# the make program:
+#9

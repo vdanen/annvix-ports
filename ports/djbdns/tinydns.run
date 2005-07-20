@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# this runs tinydns under supervise
+
+exec 2>&1
+if [ "`uname -m`" == "x86_64" ]; then
+    memlimit=""
+else
+    memlimit="-m 300000"
+fi
+
+exec /sbin/chpst -e ./env -U tinydns $memlimit /usr/local/bin/tinydns

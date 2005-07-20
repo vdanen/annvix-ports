@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# this runs dnscachex under supervise
+
+DATALIMIT=`head -1 ./env/DATALIMIT`
+exec 2>&1
+exec <seed
+exec /sbin/chpst -e ./env -U dnscache -o 250 -m "$DATALIMIT" /usr/local/bin/dnscache

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# logging for the tinydns service
+
+exec /sbin/chpst -u logger /sbin/svlogd -tt /var/log/supervise/tinydns
