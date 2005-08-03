@@ -1,8 +1,8 @@
 # $Id$
 
-%define name	tree
-%define version	1.4b3
-%define release	3sls
+%define name		tree
+%define version		1.4b3
+%define release		4avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -10,44 +10,46 @@
 %define _sysconfdir	/usr/local/etc
 %define _docdir		/usr/local/share/doc
 
-Summary:	A utility which displays a tree view of directory contents.
+Summary:	A utility which displays a tree view of directory contents
 Name:		%{name}
 Version:	%{version}
 Release:	%{release}
 Group:		File tools
 License:	GPL
 URL:		http://mama.indstate.edu/users/ice/tree/
-Source:		ftp://mama.indstate.edu/linux/tree/%{name}-%{version}.tgz
-Patch:		tree-typo.patch
+Source0:	ftp://mama.indstate.edu/linux/tree/%{name}-%{version}.tgz
+Patch0:		tree-typo.patch
 
-BuildRoot:	%{_tmppath}/%{name}-%{version}-buildroot
+BuildRoot:	%{_tmppath}/%{name}-%{version}
 
 %description
 The tree utility recursively displays the contents of directories in a
 tree-like format.  Tree is basically a UNIX port of the tree DOS
 utility.
 
-Install tree if you think it would be useful to view the contents of
-specified directories in a tree-like format.
 
 %prep
 %setup -q -n %{name}-1.4
-%patch -p1
+%patch0 -p1
+
 
 %build
 rm -f tree
-make RPM_OPT_FLAGS="$RPM_OPT_FLAGS"
+make RPM_OPT_FLAGS="%{optflags}"
+
 
 %install
 [ -n "%{buildroot}" -a "%{buildroot}" != / ] && rm -rf %{buildroot}
-mkdir -p $RPM_BUILD_ROOT/{%{_bindir},%{_sbindir},%{_mandir}/man1}
+mkdir -p %{buildroot}/{%{_bindir},%{_sbindir},%{_mandir}/man1}
 
-make	BINDIR=$RPM_BUILD_ROOT%{_bindir} \
-	MANDIR=$RPM_BUILD_ROOT%{_mandir}/man1 \
-	install
+make BINDIR=%{buildroot}%{_bindir} \
+    MANDIR=%{buildroot}%{_mandir}/man1 \
+    install
+
 
 %clean
 [ -n "%{buildroot}" -a "%{buildroot}" != / ] && rm -rf %{buildroot}
+
 
 %files
 %defattr(-,root,root)
@@ -55,7 +57,11 @@ make	BINDIR=$RPM_BUILD_ROOT%{_bindir} \
 %{_mandir}/man1/%{name}*
 %doc README LICENSE CHANGES
 
+
 %changelog
+* Wed Aug 03 2005 Vincent Danen <vdanen@annvix.org> 1.4b3-4avx
+- update spec
+
 * Sat May 29 2004 Vincent Danen <vdanen@opensls.org> 1.4b3-3sls
 - OpenSLS ports
 
