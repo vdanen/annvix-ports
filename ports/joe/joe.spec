@@ -1,8 +1,8 @@
 # $Id$
 
-%define name	joe
-%define version	3.0
-%define release	4sls
+%define name		joe
+%define version		3.0
+%define release		5avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -17,10 +17,10 @@ Release:	%{release}
 License:	GPL
 URL:		http://sourceforge.net/projects/joe-editor
 Group:		Editors
-Source:		http://heanet.dl.sourceforge.net/sourceforge/joe-editor/%{name}-%{version}.tar.gz
-Patch1:		joe-2.9.8-gnoterm.patch
+Source0:	http://heanet.dl.sourceforge.net/sourceforge/joe-editor/%{name}-%{version}.tar.gz
+Patch0:		joe-2.9.8-gnoterm.patch
 
-BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root
+BuildRoot:	%{_tmppath}/%{name}-%{version}
 BuildRequires:	ncurses-devel
 
 %description 
@@ -33,21 +33,26 @@ if you're still deciding what text editor you'd like to use, or if you
 have a fondness for WordStar.  If you're just starting out, you should
 probably install joe because it is very easy to use.
 
+
 %prep
 %setup -q
-%patch1 -p1 -b .gnoterm
+%patch0 -p1 -b .gnoterm
+
 
 %build
-export CFLAGS="$RPM_OPT_FLAGS -DUSE_LOCALE"
+export CFLAGS="%{optflags} -DUSE_LOCALE"
 %configure2_5x
 %make
+
 
 %install
 [ -n "%{buildroot}" -a "%{buildroot}" != / ] && rm -rf %{buildroot}
 %makeinstall transform=''
 
+
 %clean
 [ -n "%{buildroot}" -a "%{buildroot}" != / ] && rm -rf %{buildroot}
+
 
 %files
 %defattr (-,root,root)
@@ -56,7 +61,11 @@ export CFLAGS="$RPM_OPT_FLAGS -DUSE_LOCALE"
 %config(noreplace) %{_sysconfdir}/joe/*
 %{_mandir}/man1/*
 
+
 %changelog
+* Wed Jul 03 2005 Vincent Danen <vdanen@annvix.org> 3.0-5avx
+- update the spec
+
 * Sat May 29 2004 Vincent Danen <vdanen@opensls.org> 3.0-4sls
 - ports patches should not be compressed
 
