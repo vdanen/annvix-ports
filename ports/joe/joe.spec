@@ -1,3 +1,12 @@
+#
+# spec file for ports package joe
+#
+# Ports Package for the Annvix Linux distribution: http://annvix.org/
+#
+# Please submit bugfixes or comments to the maintainer of this package:
+#
+#   vdanen@annvix.org
+#
 # $Id$
 
 %define name		joe
