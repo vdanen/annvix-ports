@@ -1,6 +1,8 @@
-%define name 	djbdns
-%define version 1.05
-%define release 23avx
+# $Id$
+
+%define name 		djbdns
+%define version		1.05
+%define release		24avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -15,11 +17,10 @@ Release:	%{release}
 License:	D. J. Bernstein
 Group:		System/Servers
 URL:		http://cr.yp.to/djbdns.html
-Source:		%{name}-%{version}.tar.bz2
-Source1:	doc.tar.bz2
+Source0:	http://cr.yp.to/djbdns/%{name}-%{version}.tar.gz
 Source2:	tinydns-log.pl
 Source3:	%{name}-getdata
-Source4:	ftp://ftp.innominate.org/gpa/djb/%{name}-%{version}-man.tar.bz2
+Source4:	http://smarden.org/pape/djb/manpages/%{name}-%{version}-man.tar.gz
 Source5:	tinydns.run
 Source6:	tinydns-log.run
 Source7:	axfrdns.run
@@ -30,7 +31,7 @@ Source11:	dnscachex.run
 Source12:	dnscachex-log.run
 Source13:	tinydns.Makefile
 Source14:	tinydns.rootdata
-Patch0:		djbdns-1.05-errno.patch.bz2
+Patch0:		djbdns-1.05-errno.patch
 # patches from http://homepages.tesco.net/~J.deBoynePollard/Softwares/djbdns/
 Patch1:		tinydns-data-semantic-error.patch
 Patch2:		dnscache-cname-handling.patch
@@ -89,7 +90,6 @@ programs.
 # docs
 # manpages
 %setup -q -T -D -c -a 4 -n %{name}-%{version}
-%setup -q -T -D -c -a 1 -n %{name}-%{version}
 
 %patch0 -p1 -b .errno
 %patch1 -p0 -b .semantic
@@ -111,29 +111,21 @@ mkdir -p %{buildroot}
 
 make
 
-# make docs (http://cr.yp.to/slashdoc/slashdoc-merge)
-for i in packages commands cfunctions fileformats
-do
-  sort -f /dev/null `find doc/merge -name $i.html` > doc/$i.new
-  mv doc/$i.new doc/$i.html
-done
-
 
 %install
-
 #make setup check
 mkdir -p %{buildroot}{%{_sysconfdir},%{_bindir}}
-install -m 644 dnsroots.global %{buildroot}%{_sysconfdir}
+install -m 0644 dnsroots.global %{buildroot}%{_sysconfdir}
 
 for i in axfr-get axfrdns axfrdns-conf dnscache dnscache-conf dnsfilter \
-  dnsip dnsipq dnsmx dnsname dnsq dnsqr dnstrace dnstracesort dnstxt pickdns \
-  pickdns-conf pickdns-data pickdns-data random-ip rbldns rbldns-conf \
-  rbldns-data tinydns tinydns-conf tinydns-data tinydns-edit tinydns-get \
-  walldns walldns-conf
+    dnsip dnsipq dnsmx dnsname dnsq dnsqr dnstrace dnstracesort dnstxt pickdns \
+    pickdns-conf pickdns-data pickdns-data random-ip rbldns rbldns-conf \
+    rbldns-data tinydns tinydns-conf tinydns-data tinydns-edit tinydns-get \
+    walldns walldns-conf
 do
-  install -m 755 $i %{buildroot}%{_bindir}
+    install -m 0755 $i %{buildroot}%{_bindir}
 done
-install -m 755 %{SOURCE3} %{buildroot}%{_bindir}
+install -m 0755 %{SOURCE3} %{buildroot}%{_bindir}
 
 # manpages
 mkdir -p %{buildroot}%{_mandir}/man{1,5,8}
@@ -141,10 +133,10 @@ install -m644 $RPM_BUILD_DIR/%{name}-%{version}/%{name}-man/*.1 %{buildroot}%{_m
 install -m644 $RPM_BUILD_DIR/%{name}-%{version}/%{name}-man/*.5 %{buildroot}%{_mandir}/man5
 install -m644 $RPM_BUILD_DIR/%{name}-%{version}/%{name}-man/*.8 %{buildroot}%{_mandir}/man8
 cp $RPM_BUILD_DIR/%{name}-%{version}/%{name}-man/README \
-  $RPM_BUILD_DIR/%{name}-%{version}/README.manpages
+    $RPM_BUILD_DIR/%{name}-%{version}/README.manpages
 
 # install other extras
-install -m755 %{SOURCE2} %{buildroot}%{_bindir}
+install -m 0755 %{SOURCE2} %{buildroot}%{_bindir}
 
 mkdir -p %{buildroot}%{_srvdir}/{dnscache,dnscachex,tinydns,axfrdns}/{log,peers}
 mkdir -p %{buildroot}%{_srvlogdir}/{dnscache,dnscachex,tinydns,axfrdns}
@@ -165,7 +157,7 @@ install -m 0644 %{SOURCE14} %{buildroot}%{_srvdir}/tinydns/root/data
 # dnsroots.global is referenced via /etc, so make a symlink
 mkdir -p %{buildroot}/etc
 pushd %{buildroot}/etc
-	ln -s ..%{_sysconfdir}/dnsroots.global .
+    ln -s ..%{_sysconfdir}/dnsroots.global .
 popd
 
 # devel files
@@ -173,9 +165,11 @@ mkdir -p %{buildroot}{%{_includedir}/djbdns,%{_libdir}/djbdns}
 cp -av *.h %{buildroot}%{_includedir}/djbdns
 cp -av *.a %{buildroot}%{_libdir}/djbdns
 
+
 %clean
 [ -n "%{buildroot}" -a "%{buildroot}" != / ] && rm -rf %{buildroot}
 rm -rf $RPM_BUILD_DIR/%{name}-%{version}
+
 
 %pre
 %_pre_useradd tinydns %{_srvdir}/tinydns /bin/true 300
@@ -286,9 +280,10 @@ fi
 %_postun_userdel axfrdns
 %_postun_userdel dnscache
 
+
 %files
 %defattr(-,root,root)
-%doc doc/*.html TINYDNS TODO CHANGES README README.manpages
+%doc TINYDNS TODO CHANGES README README.manpages
 %config(noreplace) %{_sysconfdir}/dnsroots.global
 /etc/dnsroots.global
 %{_bindir}/*
@@ -330,7 +325,12 @@ fi
 %dir %{_libdir}/djbdns
 %{_libdir}/djbdns/*
 
+
 %changelog
+* Wed Aug 03 2005 Vincent Danen <vdanen@annvix.org> 1.05-24avx
+- spec cleanups for ports
+- remove the html docs
+
 * Mon May 09 2005 Vincent Danen <vdanen@annvix.org> 1.05-23avx
 - fix ownership of log directories
 - fix tinydns runscript... for some reason it doesn't like us
