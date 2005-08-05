@@ -11,7 +11,7 @@
 
 %define name		tree
 %define version		1.4b3
-%define release		4avx
+%define release		5avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -29,7 +29,7 @@ URL:		http://mama.indstate.edu/users/ice/tree/
 Source0:	ftp://mama.indstate.edu/linux/tree/%{name}-%{version}.tgz
 Patch0:		tree-typo.patch
 
-BuildRoot:	%{_tmppath}/%{name}-%{version}
+BuildRoot:	%{_buildroot}/%{name}-%{version}
 
 %description
 The tree utility recursively displays the contents of directories in a
@@ -68,6 +68,9 @@ make BINDIR=%{buildroot}%{_bindir} \
 
 
 %changelog
+* Fri Aug 05 2005 Vincent Danen <vdanen@annvix.org> 1.4b3-5avx
+- use %%_buildroot
+
 * Wed Aug 03 2005 Vincent Danen <vdanen@annvix.org> 1.4b3-4avx
 - update spec
 

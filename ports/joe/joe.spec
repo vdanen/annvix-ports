@@ -11,7 +11,7 @@
 
 %define name		joe
 %define version		3.0
-%define release		5avx
+%define release		6avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -29,7 +29,7 @@ Group:		Editors
 Source0:	http://heanet.dl.sourceforge.net/sourceforge/joe-editor/%{name}-%{version}.tar.gz
 Patch0:		joe-2.9.8-gnoterm.patch
 
-BuildRoot:	%{_tmppath}/%{name}-%{version}
+BuildRoot:	%{_buildroot}/%{name}-%{version}
 BuildRequires:	ncurses-devel
 
 %description 
@@ -72,6 +72,9 @@ export CFLAGS="%{optflags} -DUSE_LOCALE"
 
 
 %changelog
+* Fri Aug 05 2005 Vincent Danen <vdanen@annvix.org> 3.0-6avx
+- use %%_buildroot
+
 * Wed Jul 03 2005 Vincent Danen <vdanen@annvix.org> 3.0-5avx
 - update the spec
 

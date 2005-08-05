@@ -11,7 +11,7 @@
 
 %define name		cvs2cl
 %define version		2.51
-%define release		3avx
+%define release		4avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -30,7 +30,7 @@ License:	GPL
 Group:		Development/Other
 URL:		http://www.red-bean.com/cvs2cl/
 
-BuildRoot:	%{_tmppath}/%{name}-%{version}
+BuildRoot:	%{_buildroot}/%{name}-%{version}
 BuildArch:	noarch
 
 %description
@@ -59,6 +59,9 @@ rm -f changelogs.html
 
 
 %changelog
+* Fri Aug 05 2005 Vincent Danen <vdanen@opensls.org> 2.51-4avx
+- use %%_buildroot
+
 * Wed Aug 03 2005 Vincent Danen <vdanen@opensls.org> 2.51-3avx
 - Annvix ports
 

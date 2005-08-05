@@ -11,7 +11,7 @@
 
 %define name 		djbdns
 %define version		1.05
-%define release		24avx
+%define release		25avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -50,7 +50,7 @@ Patch5:		dnscache-strict-forwardonly.patch
 Patch6:		compiler-temporary-filename.patch
 Patch7:		dnscacheip-space-separator.patch
 
-BuildRoot:	%{_tmppath}/%{name}-%{version}
+BuildRoot:	%{_buildroot}/%{name}-%{version}
 BuildPreReq:	shadow-utils
 
 Requires:	sh-utils, ipsvd, srv, rpm-helper
@@ -336,6 +336,9 @@ fi
 
 
 %changelog
+* Fri Aug 05 2005 Vincent Danen <vdanen@annvix.org> 1.05-25avx
+- use %%_buildroot
+
 * Wed Aug 03 2005 Vincent Danen <vdanen@annvix.org> 1.05-24avx
 - spec cleanups for ports
 - remove the html docs
