@@ -1,5 +1,5 @@
 #
-# spec file for ports package ying
+# spec file for ports package dos2unix
 #
 # Ports Package for the Annvix Linux distribution: http://annvix.org/
 #
