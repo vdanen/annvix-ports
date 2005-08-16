@@ -1,0 +1,35 @@
+2004-06-21  Andrew Cagney  <cagney@gnu.org>
+
+	* tramp-frame.c (tramp_frame_sniffer): Don't reject a frame when
+	there's a valid symbol or section.
+
+Index: ./gdb/tramp-frame.c
+===================================================================
+RCS file: /cvs/src/src/gdb/tramp-frame.c,v
+retrieving revision 1.5
+diff -p -u -r1.5 tramp-frame.c
+--- ./gdb/tramp-frame.c	8 Apr 2004 20:03:52 -0000	1.5
++++ ./gdb/tramp-frame.c	21 Jun 2004 20:20:34 -0000
+@@ -125,16 +125,12 @@ tramp_frame_sniffer (const struct frame_
+   char *name;
+   struct tramp_frame_cache *tramp_cache;
+ 
+-  /* If the function has a valid symbol name, it isn't a
+-     trampoline.  */
+-  find_pc_partial_function (pc, &name, NULL, NULL);
+-  if (name != NULL)
+-    return 0;
+-  /* If the function lives in a valid section (even without a starting
+-     point) it isn't a trampoline.  */
+-  if (find_pc_section (pc) != NULL)
+-    return 0;
+-  /* Finally, check that the trampoline matches at PC.  */
++  /* NOTE: cagney/2004-06-20: There was code here to reject any
++     attempt to sniff a valid section.  As sigaltstack illustrates,
++     the user can put their stack anywhere including somewhere where
++     there is a section / symbol.  Outch!  */
++
++  /* Check that the trampoline matches at PC.  */
+   func = tramp_frame_start (tramp, next_frame, pc);
+   if (func == 0)
+     return 0;

@@ -1,0 +1,193 @@
+2005-07-11  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* ia64-tdep.c (pseudo_regs): Add CURSOR_ADDR_REGNUM.
+	(ia64_register_names): Add empty string for CURSOR_ADDR_REGNUM.
+	(ia64_frame_prev_register): Default a request for CURSOR_ADDR_REGNUM
+	to return 0.
+	(ia64_sigtramp_frame_prev_register): Ditto.
+	(ia64_gdb2uw_regnum): Map CURSOR_ADDR_REGNUM to INT_MAX so
+	it won't clash with any legitimate UNW register number.
+	(ia64_unwind_cursor): New callback.
+	(ia64_libunwind_descr): Add new ia64_unwind_cursor callback.
+	* libunwind-frame.h (struct libunwind_descr): Add new slot
+	for unwind cursor callback.
+	* libunwind-frame.c (libunwind_frame_cache): Attempt to copy
+	and step previous cursor if possible, otherwise, create new
+	cursor.
+	(libunwind_frame_prev_register): Support request for
+	getting the cursor address.
+
+--- gdb-6.3/gdb/ia64-tdep.c.fix	2005-07-11 18:13:42.000000000 -0400
++++ gdb-6.3/gdb/ia64-tdep.c	2005-07-11 18:15:52.000000000 -0400
+@@ -141,7 +141,7 @@ static int lr_regnum = IA64_VRAP_REGNUM;
+    they may not be accessible via the ptrace register get/set interfaces.  */
+ enum pseudo_regs { FIRST_PSEUDO_REGNUM = NUM_IA64_RAW_REGS, VBOF_REGNUM = IA64_NAT127_REGNUM + 1, V32_REGNUM, 
+ 		   V127_REGNUM = V32_REGNUM + 95, 
+-		   VP0_REGNUM, VP16_REGNUM = VP0_REGNUM + 16, VP63_REGNUM = VP0_REGNUM + 63, LAST_PSEUDO_REGNUM };
++		   VP0_REGNUM, VP16_REGNUM = VP0_REGNUM + 16, VP63_REGNUM = VP0_REGNUM + 63, CURSOR_ADDR_REGNUM, LAST_PSEUDO_REGNUM };
+ 
+ /* Array of register names; There should be ia64_num_regs strings in
+    the initializer.  */
+@@ -253,6 +253,7 @@ static char *ia64_register_names[] = 
+   "p40",  "p41",  "p42",  "p43",  "p44",  "p45",  "p46",  "p47",
+   "p48",  "p49",  "p50",  "p51",  "p52",  "p53",  "p54",  "p55",
+   "p56",  "p57",  "p58",  "p59",  "p60",  "p61",  "p62",  "p63",
++  ""
+ };
+ 
+ struct ia64_frame_cache
+@@ -1855,6 +1856,12 @@ ia64_frame_prev_register (struct frame_i
+ 	  read_memory (addr, valuep, register_size (current_gdbarch, regnum));
+         }
+     }
++  else if (regnum == CURSOR_ADDR_REGNUM)
++    {
++      /* The cursor is the address of the ia64 libunwind cursor.  
++         Default to 0.  */
++      *lvalp = lval_memory;
++    }
+   else
+     {
+       CORE_ADDR addr = 0;
+@@ -2177,6 +2184,12 @@ ia64_sigtramp_frame_prev_register (struc
+ 	  *addrp = pr_addr;
+ 	}
+     }
++  else if (regnum == CURSOR_ADDR_REGNUM)
++    {
++      /* The cursor is the address of the ia64 libunwind cursor.  
++         Default to 0.  */
++      *lvalp = lval_memory;
++    }
+   else
+     {
+       /* All other registers not listed above.  */
+@@ -2296,6 +2309,8 @@ ia64_gdb2uw_regnum (int regnum)
+     return UNW_IA64_AR + (regnum - IA64_AR0_REGNUM);
+   else if ((unsigned) (regnum - IA64_NAT0_REGNUM) < 128)
+     return UNW_IA64_NAT + (regnum - IA64_NAT0_REGNUM);
++  else if (regnum == CURSOR_ADDR_REGNUM)
++    return INT_MAX;
+   else
+     return -1;
+ }
+@@ -2331,6 +2346,21 @@ ia64_uw2gdb_regnum (int uw_regnum)
+     return -1;
+ }
+ 
++/* Special callback function to allow libunwind-frame to get
++   the address of the next frame's cursor so it may be copied and
++   stepped.  */
++static unw_cursor_t *
++ia64_unwind_cursor (struct frame_info *next_frame)
++{
++  unw_cursor_t *cursor_addr;
++  char buf[8];
++
++  frame_unwind_register (next_frame, CURSOR_ADDR_REGNUM, buf);
++  cursor_addr = (unw_cursor_t *)extract_unsigned_integer (buf, 8);
++
++  return cursor_addr;
++}
++
+ /* Gdb libunwind-frame callback function to reveal if register is a float 
+    register or not.  */
+ static int
+@@ -3111,6 +3141,7 @@ static struct libunwind_descr ia64_libun
+   ia64_gdb2uw_regnum, 
+   ia64_uw2gdb_regnum, 
+   ia64_is_fpreg, 
++  ia64_unwind_cursor, 
+   &ia64_unw_accessors,
+   &ia64_unw_rse_accessors,
+ };
+--- gdb-6.3/gdb/libunwind-frame.c.fix	2005-07-11 18:17:05.000000000 -0400
++++ gdb-6.3/gdb/libunwind-frame.c	2005-07-11 18:20:31.000000000 -0400
+@@ -122,6 +122,7 @@ libunwind_frame_set_descr (struct gdbarc
+   arch_descr->is_fpreg = descr->is_fpreg;
+   arch_descr->accessors = descr->accessors;
+   arch_descr->special_accessors = descr->special_accessors;
++  arch_descr->unwind_cursor = descr->unwind_cursor;
+ }
+ 
+ static struct libunwind_frame_cache *
+@@ -129,6 +130,7 @@ libunwind_frame_cache (struct frame_info
+ {
+   unw_accessors_t *acc;
+   unw_addr_space_t as;
++  unw_cursor_t *cursor_addr;
+   unw_word_t fp;
+   unw_regnum_t uw_sp_regnum;
+   struct libunwind_frame_cache *cache;
+@@ -147,22 +149,33 @@ libunwind_frame_cache (struct frame_info
+       && get_frame_type (next_frame) != SIGTRAMP_FRAME)
+     return NULL;
+ 
+-  /* Get a libunwind cursor to the previous frame.  We do this by initializing
+-     a cursor.  Libunwind treats a new cursor as the top of stack and will get
+-     the current register set via the libunwind register accessor.  Now, we
+-     provide the platform-specific accessors and we set up the register accessor to use
+-     the frame register unwinding interfaces so that we properly get the registers for
+-     the current frame rather than the top.  We then use the  unw_step function to 
+-     move the libunwind cursor back one frame.  We can later use this cursor to find previous 
+-     registers via the unw_get_reg interface which will invoke libunwind's special logic.  */
++  /* Get a libunwind cursor to the previous frame.  We do this by getting
++     the address of the next frame's cursor (if one exists).  If we are at 
++     the top of stack, then we will get back a zero cursor address and we 
++     should initialize a new cursor.
++
++     Otherwise, we copy the cursor address contents and step back by one.
++     Libunwind will use our register accessors which are set up to
++     unwind registers from the previous frame.  We will later use this cursor
++     to find previous registers via the unw_get_reg interface.  By passing
++     back a cursor, we allow libunwind to handle sigaltstack which requires
++     one cursor stepped back for all frames.  */
+   descr = libunwind_descr (get_frame_arch (next_frame));
+-  acc = descr->accessors;
+-  as =  unw_create_addr_space_p (acc,
++  cursor_addr = descr->unwind_cursor (next_frame);
++
++  if (cursor_addr == 0)
++    {
++      acc = descr->accessors;
++      as =  unw_create_addr_space_p (acc,
+ 				 TARGET_BYTE_ORDER == BFD_ENDIAN_BIG
+ 				 ? __BIG_ENDIAN
+ 				 : __LITTLE_ENDIAN);
+ 
+-  unw_init_remote_p (&cache->cursor, as, next_frame);
++      unw_init_remote_p (&cache->cursor, as, next_frame);
++    }
++  else /* make copy */
++    cache->cursor = *cursor_addr;
++
+   if (unw_step_p (&cache->cursor) < 0)
+     return NULL;
+ 
+@@ -285,6 +298,16 @@ libunwind_frame_prev_register (struct fr
+   if (uw_regnum < 0)
+     return;
+ 
++  /* Check if we are unwinding the cursor address which just gives
++     back the address of the next frame's cursor.  This is a special
++     modification to support unwinding through a sigaltstack.  */
++  if (uw_regnum == INT_MAX)
++    {
++      store_unsigned_integer (valuep, sizeof (CORE_ADDR), 
++			      (CORE_ADDR)&cache->cursor);
++      return;
++    }
++
+   /* To get the previous register, we use the libunwind register APIs with
+      the cursor we have already pushed back to the previous frame.  */
+ 
+--- gdb-6.3/gdb/libunwind-frame.h.fix	2005-07-11 18:17:24.000000000 -0400
++++ gdb-6.3/gdb/libunwind-frame.h	2005-07-11 18:18:46.000000000 -0400
+@@ -37,6 +37,7 @@ struct libunwind_descr
+   int (*gdb2uw) (int);
+   int (*uw2gdb) (int);
+   int (*is_fpreg) (int);
++  unw_cursor_t *(*unwind_cursor) (struct frame_info *next_frame);
+   void *accessors;
+   void *special_accessors;
+ };

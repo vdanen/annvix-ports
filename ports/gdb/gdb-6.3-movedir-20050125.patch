@@ -1,0 +1,68 @@
+2005-01-25  Jeff Johnston  <jjohnstn@redhat.com>
+	    Elena Zannoni <ezannoni@redhat.com>
+
+        * dwarf2read.c (dwarf_decode_lines):  If a file entry has
+        a directory index, prepend the specified directory to the
+        name when starting a subfile.
+
+--- gdb-6.3/gdb/dwarf2read.c.fix	Tue Jan 25 19:08:23 2005
++++ gdb-6.3/gdb/dwarf2read.c	Tue Jan 25 19:14:27 2005
+@@ -1,6 +1,6 @@
+ /* DWARF 2 debugging format support for GDB.
+    Copyright 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003,
+-   2004
++   2004, 2005
+    Free Software Foundation, Inc.
+ 
+    Adapted by Gary Funck (gary@intrepid.com), Intrepid Technology,
+@@ -6457,11 +6457,18 @@ dwarf_decode_lines (struct line_header *
+ 	     are 1-based.  */
+           struct file_entry *fe = &lh->file_names[file - 1];
+           char *dir;
++	  char *name = fe->name;
+           if (fe->dir_index)
+-            dir = lh->include_dirs[fe->dir_index - 1];
+-          else
+-            dir = comp_dir;
+-	  dwarf2_start_subfile (fe->name, dir);
++            {
++              /* We have a name with a directory index value.  We
++	         need to prepend the directory index string in front
++		 of the name.  */
++              dir = lh->include_dirs[fe->dir_index - 1];
++              name = concat (dir, SLASH_STRING, fe->name, NULL);
++            }
++	  dwarf2_start_subfile (name, comp_dir);
++          if (fe->dir_index)
++	    xfree (name);
+ 	}
+ 
+       /* Decode the table. */
+@@ -6553,15 +6560,23 @@ dwarf_decode_lines (struct line_header *
+                    statement program are 1-based.  */
+                 struct file_entry *fe;
+                 char *dir;
++		char *name;
+                 file = read_unsigned_leb128 (abfd, line_ptr, &bytes_read);
+                 line_ptr += bytes_read;
+                 fe = &lh->file_names[file - 1];
++		name = fe->name;
+                 if (fe->dir_index)
+-                  dir = lh->include_dirs[fe->dir_index - 1];
+-                else
+-                  dir = comp_dir;
++		  {
++                    /* We have a name with a directory index value.  We
++	               need to prepend the directory index string in front
++		       of the name.  */
++                    dir = lh->include_dirs[fe->dir_index - 1];
++                    name = concat (dir, SLASH_STRING, fe->name, NULL);
++                  }
+                 if (!decode_for_pst_p)
+-                  dwarf2_start_subfile (fe->name, dir);
++                  dwarf2_start_subfile (name, comp_dir);
++                if (fe->dir_index)
++                  xfree (name);
+               }
+ 	      break;
+ 	    case DW_LNS_set_column:

@@ -1,0 +1,85 @@
+2005-04-02  Andrew Cagney  <cagney@gnu.org>
+
+	* symfile.c (separate_debug_file_exists): When the CRCs mismatch
+	print a warning.
+	(find_separate_debug_file): Pass in the objfile's name.
+
+--- ../gdb-6.3/./gdb/symfile.c	2005-04-02 16:02:22.000000000 -0500
++++ ./gdb/symfile.c	2005-04-02 13:05:10.000000000 -0500
+@@ -1043,7 +1043,8 @@
+ }
+ 
+ static int
+-separate_debug_file_exists (const char *name, unsigned long crc)
++separate_debug_file_exists (const char *name, unsigned long crc,
++			    const char *parent_name)
+ {
+   unsigned long file_crc = 0;
+   int fd;
+@@ -1052,6 +1053,12 @@
+ 
+   fd = open (name, O_RDONLY | O_BINARY);
+   if (fd < 0)
++    /* Fail silently, this preserves existing behavior.  The
++       assumption here is that the file wasn't found because there's
++       no file to find (we shouldn't be printing warnings about
++       missing debug info files when the user hasn't installed them).
++       The alternative is to complain here - that better belongs in a
++       warning.  */
+     return 0;
+ 
+   while ((count = read (fd, buffer, sizeof (buffer))) > 0)
+@@ -1059,7 +1066,16 @@
+ 
+   close (fd);
+ 
+-  return crc == file_crc;
++  if (crc != file_crc)
++    {
++      warning (_("the debug information found in \"%s\""
++		 " does not match \"%s\" (CRC mismatch).\n"),
++	       name, parent_name);
++      return 0;
++    }
++
++  /* No worries!  */
++  return 1;
+ }
+ 
+ static char *debug_file_directory = NULL;
+@@ -1083,6 +1099,8 @@
+   basename = get_debug_link_info (objfile, &crc32);
+ 
+   if (basename == NULL)
++    /* There's no separate debug info, hence there's no way we could
++       load it => no warning.  */
+     return NULL;
+ 
+   dir = xstrdup (objfile->name);
+@@ -1110,7 +1128,7 @@
+   strcpy (debugfile, dir);
+   strcat (debugfile, basename);
+ 
+-  if (separate_debug_file_exists (debugfile, crc32))
++  if (separate_debug_file_exists (debugfile, crc32, objfile->name))
+     {
+       xfree (basename);
+       xfree (dir);
+@@ -1123,7 +1141,7 @@
+   strcat (debugfile, "/");
+   strcat (debugfile, basename);
+ 
+-  if (separate_debug_file_exists (debugfile, crc32))
++  if (separate_debug_file_exists (debugfile, crc32, objfile->name))
+     {
+       xfree (basename);
+       xfree (dir);
+@@ -1136,7 +1154,7 @@
+   strcat (debugfile, dir);
+   strcat (debugfile, basename);
+ 
+-  if (separate_debug_file_exists (debugfile, crc32))
++  if (separate_debug_file_exists (debugfile, crc32, objfile->name))
+     {
+       xfree (basename);
+       xfree (dir);

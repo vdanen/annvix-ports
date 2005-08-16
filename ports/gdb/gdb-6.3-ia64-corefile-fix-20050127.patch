@@ -1,0 +1,25 @@
+2005-01-25  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* ia64-tdep.c (getunwind_table): Call the low-level xfer
+	unwind table syscall to support backtracing from syscalls in
+	a corefile.
+
+--- gdb-6.3/gdb/ia64-tdep.c.fix	Thu Jan 27 12:03:40 2005
++++ gdb-6.3/gdb/ia64-tdep.c	Thu Jan 27 12:06:23 2005
+@@ -2357,8 +2357,14 @@ static int
+ getunwind_table (void *buf, size_t len)
+ {
+   LONGEST x;
+-  x = target_read_partial (&current_target, TARGET_OBJECT_UNWIND_TABLE, NULL,
+-			   buf, 0, len);
++
++  /* FIXME: This is a temporary solution to backtracing syscalls in corefiles.
++            To do this properly, the AUXV section should be used.  This
++	    fix will work as long as the kernel used to generate the corefile
++	    is equivalent to the kernel used to debug the corefile.  */
++  x = ia64_linux_xfer_unwind_table (&current_target, 
++		  		    TARGET_OBJECT_UNWIND_TABLE, NULL,
++			   	    buf, NULL, 0, len);
+ 
+   return (int)x;
+ }

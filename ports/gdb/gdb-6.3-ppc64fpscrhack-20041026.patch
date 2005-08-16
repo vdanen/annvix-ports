@@ -1,0 +1,30 @@
+Committed to mainline 2005-02-08
+
+2004-10-26  Andrew Cagney  <cagney@redhat.com>
+
+	* ppc-linux-nat.c (ppc_register_u_addr): Hack around 64-bit
+	PT_FPSCR breakage.
+
+--- ./gdb/ppc-linux-nat.c.1	Tue Oct 26 11:12:46 2004
++++ ./gdb/ppc-linux-nat.c	Tue Oct 26 11:22:16 2004
+@@ -164,8 +164,18 @@
+     u_addr = PT_MSR * wordsize;
+   if (tdep->ppc_fpscr_regnum >= 0
+       && regno == tdep->ppc_fpscr_regnum)
+-    u_addr = PT_FPSCR * wordsize;
+-
++    {
++      /* 64-bit GNU/Linux has a messed up definition of PT_FPSCR.  The
++	 header contains the 32-bit definition where floating-point
++	 registers occupy two 32-bit "slots", and the FPSCR lives in
++	 the second of a slot pair (hence +1).  For 64-bit, that isn't
++	 the case and the full 64-bit double-slot is fetched so no
++	 adjustment is necessary.  Hack around this.  */
++      if (wordsize == 8 && PT_FPSCR == (48 + 32 + 1))
++	u_addr = (48 + 32) * wordsize;
++      else
++	u_addr = PT_FPSCR * wordsize;
++    }
+   return u_addr;
+ }
+ 

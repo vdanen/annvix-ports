@@ -1,0 +1,579 @@
+2005-01-20  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* symtab.h (find_line_pc): Change prototype to new api
+	which returns a list of pc values and the number of list elements.
+	* symtab.c (find_line_pc): Change function to new api which
+	returns a list of pc values.  Support recognizing a base ctor
+	or dtor and finding an additional pc value for the in-charge
+	ctor or dtor accordingly.
+	(find_line_common): Change api to accept a start_index argument
+	which determines where to start searching from in the line table.
+	(find_line_by_pc): New function.
+	* breakpoint.c (resolve_sal_pc_list): New function.
+	(breakpoint_sals_to_pc): Support multiple pc values for a
+	line in a ctor/dtor.
+	(gdb_breakpoint): Change call to find_line_pc to use new api.
+	(break_command_1): Move resolve_sals_to_pc earlier due to the
+	fact it now can extend the sal list.
+	* mi/mi-cmd-disas.c (mi_cmd_disassemble): Change call to
+	find_line_pc to new api.
+	* tui/tui-layout.c (extract_display_start_addr): Ditto.
+	* tui/tui-win.c (make_visible_with_new_height): Ditto.
+	* tui/tui-winsource.c (tui_update_source_windows_with_addr): Ditto.
+
+--- gdb-6.3/gdb/mi/mi-cmd-disas.c.fix	Thu Jan 20 18:45:16 2005
++++ gdb-6.3/gdb/mi/mi-cmd-disas.c	Thu Jan 20 19:08:00 2005
+@@ -1,5 +1,5 @@
+ /* MI Command Set - disassemble commands.
+-   Copyright 2000, 2001, 2002 Free Software Foundation, Inc.
++   Copyright 2000, 2001, 2002, 2005 Free Software Foundation, Inc.
+    Contributed by Cygnus Solutions (a Red Hat company).
+ 
+    This file is part of GDB.
+@@ -145,11 +145,17 @@ mi_cmd_disassemble (char *command, char 
+ 
+   if (line_seen && file_seen)
+     {
++      CORE_ADDR *pc_list;
++      int num_pc_values;
+       s = lookup_symtab (file_string);
+       if (s == NULL)
+ 	error ("mi_cmd_disassemble: Invalid filename.");
+-      if (!find_line_pc (s, line_num, &start))
++      if (!find_line_pc (s, line_num, &pc_list, &num_pc_values))
+ 	error ("mi_cmd_disassemble: Invalid line number");
++      /* FIXME: What do we do with multiple pc values for ctors/dtors
++                under mi?  */
++      start = pc_list[0];
++      xfree (pc_list);
+       if (find_pc_partial_function (start, NULL, &low, &high) == 0)
+ 	error ("mi_cmd_disassemble: No function contains specified address");
+     }
+--- gdb-6.3/gdb/tui/tui-layout.c.fix	Thu Jan 20 18:44:53 2005
++++ gdb-6.3/gdb/tui/tui-layout.c	Thu Jan 20 19:08:16 2005
+@@ -1,6 +1,6 @@
+ /* TUI layout window management.
+ 
+-   Copyright 1998, 1999, 2000, 2001, 2002, 2003, 2004 Free Software
++   Copyright 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005 Free Software
+    Foundation, Inc.
+ 
+    Contributed by Hewlett-Packard Company.
+@@ -511,7 +511,8 @@ extract_display_start_addr (void)
+ {
+   enum tui_layout_type cur_layout = tui_current_layout ();
+   CORE_ADDR addr;
+-  CORE_ADDR pc;
++  CORE_ADDR *pc_list;
++  int num_pc_values;
+   struct symtab_and_line cursal = get_current_source_symtab_and_line ();
+ 
+   switch (cur_layout)
+@@ -520,8 +521,11 @@ extract_display_start_addr (void)
+     case SRC_DATA_COMMAND:
+       find_line_pc (cursal.symtab,
+ 		    TUI_SRC_WIN->detail.source_info.start_line_or_addr.line_no,
+-		    &pc);
+-      addr = pc;
++		    &pc_list, &num_pc_values);
++      /* FIXME: What do we do with multiple pc values for ctors/dtors or
++                inlined functions?  */
++      addr = pc_list[0];
++      xfree (pc_list);
+       break;
+     case DISASSEM_COMMAND:
+     case SRC_DISASSEM_COMMAND:
+--- gdb-6.3/gdb/tui/tui-win.c.fix	Thu Jan 20 18:44:58 2005
++++ gdb-6.3/gdb/tui/tui-win.c	Thu Jan 20 19:08:24 2005
+@@ -1,6 +1,6 @@
+ /* TUI window generic functions.
+ 
+-   Copyright 1998, 1999, 2000, 2001, 2002, 2003, 2004 Free Software
++   Copyright 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005 Free Software
+    Foundation, Inc.
+ 
+    Contributed by Hewlett-Packard Company.
+@@ -1313,7 +1313,15 @@ make_visible_with_new_height (struct tui
+ 	    line.line_no = cursal.line;
+ 	  else
+ 	    {
+-	      find_line_pc (s, cursal.line, &line.addr);
++              CORE_ADDR *pc_list;
++              int num_pc_values;
++	      if (find_line_pc (s, cursal.line, &pc_list, &num_pc_values))
++                {
++                  /* FIXME: What do we do with multiple pc values for
++                            ctors/dtors and inlined functions?  */
++                  line.addr = pc_list[0];
++                  xfree (pc_list);
++                }
+ 	    }
+ 	  tui_update_source_window (win_info, s, line, TRUE);
+ 	}
+--- gdb-6.3/gdb/tui/tui-winsource.c.fix	Thu Jan 20 18:45:04 2005
++++ gdb-6.3/gdb/tui/tui-winsource.c	Thu Jan 20 19:08:34 2005
+@@ -1,6 +1,6 @@
+ /* TUI display source/assembly window.
+ 
+-   Copyright 1998, 1999, 2000, 2001, 2002, 2003, 2004 Free Software
++   Copyright 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005 Free Software
+    Foundation, Inc.
+ 
+    Contributed by Hewlett-Packard Company.
+@@ -171,14 +171,21 @@ tui_update_source_windows_with_addr (COR
+ void
+ tui_update_source_windows_with_line (struct symtab *s, int line)
+ {
+-  CORE_ADDR pc;
++  CORE_ADDR pc = 0;
++  CORE_ADDR *pc_list;
++  int num_pc_values;
+   union tui_line_or_address l;
+   
+   switch (tui_current_layout ())
+     {
+     case DISASSEM_COMMAND:
+     case DISASSEM_DATA_COMMAND:
+-      find_line_pc (s, line, &pc);
++      /* FIXME: What do we do with multiple pc values for ctors/dtors?  */
++      if (find_line_pc (s, line, &pc_list, &num_pc_values))
++        {
++          pc = pc_list[0];
++          xfree (pc_list);
++        }
+       tui_update_source_windows_with_addr (pc);
+       break;
+     default:
+@@ -186,7 +193,12 @@ tui_update_source_windows_with_line (str
+       tui_show_symtab_source (s, l, FALSE);
+       if (tui_current_layout () == SRC_DISASSEM_COMMAND)
+ 	{
+-	  find_line_pc (s, line, &pc);
++          /* FIXME: What do we do with multiple pc values for ctors/dtors?  */
++          if (find_line_pc (s, line, &pc_list, &num_pc_values))
++            {
++              pc = pc_list[0];
++              xfree (pc_list);
++            }
+ 	  tui_show_disassem (pc);
+ 	}
+       break;
+--- gdb-6.3/gdb/symtab.c.fix	Thu Jan 20 18:44:33 2005
++++ gdb-6.3/gdb/symtab.c	Thu Jan 20 19:07:26 2005
+@@ -1,7 +1,7 @@
+ /* Symbol table lookup for the GNU debugger, GDB.
+ 
+    Copyright 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994,
+-   1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004
++   1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005
+    Free Software Foundation, Inc.
+ 
+    This file is part of GDB.
+@@ -72,7 +72,9 @@ static void sources_info (char *, int);
+ 
+ static void output_source_filename (const char *, int *);
+ 
+-static int find_line_common (struct linetable *, int, int *);
++static int find_line_common (struct linetable *, int, int, int *);
++
++static int find_line_by_pc (struct linetable *, CORE_ADDR, int *);
+ 
+ /* This one is used by linespec.c */
+ 
+@@ -2230,6 +2232,9 @@ find_pc_line (CORE_ADDR pc, int notcurre
+ /* Find line number LINE in any symtab whose name is the same as
+    SYMTAB.
+ 
++   If INDEX is non-NULL, use the value as the starting index in the
++   linetable to start at.
++
+    If found, return the symtab that contains the linetable in which it was
+    found, set *INDEX to the index in the linetable of the best entry
+    found, and set *EXACT_MATCH nonzero if the value returned is an
+@@ -2246,13 +2251,19 @@ find_line_symtab (struct symtab *symtab,
+      so far seen.  */
+ 
+   int best_index;
++  int start_index;
+   struct linetable *best_linetable;
+   struct symtab *best_symtab;
+ 
++  if (index)
++    start_index = *index;
++  else
++    start_index = 0;
++
+   /* First try looking it up in the given symtab.  */
+   best_linetable = LINETABLE (symtab);
+   best_symtab = symtab;
+-  best_index = find_line_common (best_linetable, line, &exact);
++  best_index = find_line_common (best_linetable, line, start_index, &exact);
+   if (best_index < 0 || !exact)
+     {
+       /* Didn't find an exact match.  So we better keep looking for
+@@ -2283,7 +2294,7 @@ find_line_symtab (struct symtab *symtab,
+ 	if (strcmp (symtab->filename, s->filename) != 0)
+ 	  continue;
+ 	l = LINETABLE (s);
+-	ind = find_line_common (l, line, &exact);
++	ind = find_line_common (l, line, start_index, &exact);
+ 	if (ind >= 0)
+ 	  {
+ 	    if (exact)
+@@ -2319,13 +2330,23 @@ done:
+    Returns zero for invalid line number (and sets the PC to 0).
+    The source file is specified with a struct symtab.  */
+ 
++static CORE_ADDR empty_pc_list = (CORE_ADDR)0;
++
+ int
+-find_line_pc (struct symtab *symtab, int line, CORE_ADDR *pc)
++find_line_pc (struct symtab *symtab, int line, CORE_ADDR **pc_array,
++              int *num_elements)
+ {
+   struct linetable *l;
+-  int ind;
++  int ind = 0;
++  char *name;
++  CORE_ADDR main_pc;
++  struct minimal_symbol *minsym;
++  struct minimal_symbol *minsym2;
++
++
++  *pc_array = &empty_pc_list;
++  *num_elements = 0;
+ 
+-  *pc = 0;
+   if (symtab == 0)
+     return 0;
+ 
+@@ -2333,7 +2354,50 @@ find_line_pc (struct symtab *symtab, int
+   if (symtab != NULL)
+     {
+       l = LINETABLE (symtab);
+-      *pc = l->item[ind].pc;
++      main_pc = l->item[ind].pc;
++      minsym = lookup_minimal_symbol_by_pc (main_pc);
++      if (minsym != NULL && minsym->ginfo.language == language_cplus)
++        {
++	  char *base_name = 
++            minsym->ginfo.language_specific.cplus_specific.demangled_name;
++          char *tmp_ptr = strstr (base_name, "$base(");
++          if (tmp_ptr != NULL)
++            {
++              char *regular_name = (char *)xmalloc (strlen (base_name));
++              memcpy (regular_name, base_name, tmp_ptr - base_name);
++              strcpy (regular_name + (tmp_ptr - base_name), 
++                      tmp_ptr + sizeof ("$base") - 1);
++              minsym2 = lookup_minimal_symbol (regular_name, NULL, NULL);
++              xfree (regular_name);
++              if (minsym2 != NULL)
++                {
++		  /* We have recognized we have a ctor or dtor and have
++		     located our line in the not-in-charge version.  We
++		     also have located the in-charge version's minsym.
++		     From this, we can find the index for the first line
++		     line in the in-charge ctor/dtor and then search forward
++		     for the specified line, thereby finding the 2nd match.  */
++		  int exact;
++		  int ind = find_line_by_pc (l, minsym2->ginfo.value.address,
++				             &exact);
++		  if (ind >= 0)
++		    {
++		      ind = find_line_common (l, line, ind, &exact);
++		      if (ind >= 0)
++		        {
++                          *pc_array = xmalloc (2 * sizeof (CORE_ADDR));
++                          (*pc_array)[0] = main_pc;
++                          (*pc_array)[1] = l->item[ind].pc;
++                          *num_elements = 2;
++                          return 1;
++			}
++		    }
++                }
++            }
++        }
++      *pc_array = xmalloc (sizeof (CORE_ADDR));
++      (*pc_array)[0] = main_pc;
++      *num_elements = 1;
+       return 1;
+     }
+   else
+@@ -2351,12 +2415,22 @@ find_line_pc_range (struct symtab_and_li
+ 		    CORE_ADDR *endptr)
+ {
+   CORE_ADDR startaddr;
++  CORE_ADDR *pc_list;
++  int num_pc_values;
+   struct symtab_and_line found_sal;
+ 
+   startaddr = sal.pc;
+-  if (startaddr == 0 && !find_line_pc (sal.symtab, sal.line, &startaddr))
++  if (startaddr == 0 
++      && !find_line_pc (sal.symtab, sal.line, &pc_list, &num_pc_values))
+     return 0;
+ 
++  /* FIXME: have to handle ctors/dtors where line equates to multiple
++            pc ranges.  */
++  if (startaddr == 0)
++    startaddr = pc_list[0];
++
++  xfree (pc_list);
++
+   /* This whole function is based on address.  For example, if line 10 has
+      two parts, one from 0x100 to 0x200 and one from 0x300 to 0x400, then
+      "info line *0x123" should say the line goes from 0x100 to 0x200
+@@ -2386,7 +2460,7 @@ find_line_pc_range (struct symtab_and_li
+    Set *EXACT_MATCH nonzero if the value returned is an exact match.  */
+ 
+ static int
+-find_line_common (struct linetable *l, int lineno,
++find_line_common (struct linetable *l, int lineno, int start_index,
+ 		  int *exact_match)
+ {
+   int i;
+@@ -2405,7 +2479,7 @@ find_line_common (struct linetable *l, i
+     return -1;
+ 
+   len = l->nitems;
+-  for (i = 0; i < len; i++)
++  for (i = start_index; i < len; i++)
+     {
+       struct linetable_entry *item = &(l->item[i]);
+ 
+@@ -2429,6 +2503,52 @@ find_line_common (struct linetable *l, i
+   return best_index;
+ }
+ 
++/* Given a line table and a pc value, return the index into the line
++   table for the line with pc >= specified pc value.
++   Return -1 if none is found.  The value is >= 0 if it is an index.
++
++   Set *EXACT_MATCH nonzero if the value returned is an exact match.  */
++
++static int
++find_line_by_pc (struct linetable *l, CORE_ADDR pc,
++	         int *exact_match)
++{
++  int i;
++  int len;
++
++  /* BEST is the smallest linenumber > LINENO so far seen,
++     or 0 if none has been seen so far.
++     BEST_INDEX identifies the item for it.  */
++
++  if (l == 0)
++    return -1;
++
++  len = l->nitems;
++  for (i = 0; i < len; i++)
++    {
++      struct linetable_entry *item = &(l->item[i]);
++
++      /* Return the first (lowest address) entry which matches or
++         exceeds the given pc value.  */
++      if (item->pc == pc)
++	{
++	  *exact_match = 1;
++	  return i;
++	}
++
++      if (item->pc > pc)
++	{
++	  *exact_match = 0;
++	  return i;
++	}
++    }
++
++  /* If we got here, we didn't get a match.  */
++
++  *exact_match = 0;
++  return -1;
++}
++
+ int
+ find_pc_line_pc_range (CORE_ADDR pc, CORE_ADDR *startptr, CORE_ADDR *endptr)
+ {
+--- gdb-6.3/gdb/symtab.h.fix	Thu Jan 20 18:44:38 2005
++++ gdb-6.3/gdb/symtab.h	Thu Jan 20 19:07:41 2005
+@@ -1,7 +1,7 @@
+ /* Symbol table definitions for GDB.
+ 
+    Copyright 1986, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995,
+-   1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004 Free Software
++   1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005 Free Software
+    Foundation, Inc.
+ 
+    This file is part of GDB.
+@@ -1256,13 +1256,16 @@ extern struct symtab_and_line find_pc_se
+ 
+ /* Given a symtab and line number, return the pc there.  */
+ 
+-extern int find_line_pc (struct symtab *, int, CORE_ADDR *);
++extern int find_line_pc (struct symtab *, int, CORE_ADDR **, int *);
+ 
+ extern int find_line_pc_range (struct symtab_and_line, CORE_ADDR *,
+ 			       CORE_ADDR *);
+ 
+ extern void resolve_sal_pc (struct symtab_and_line *);
+ 
++extern void resolve_sal_pc_list (struct symtab_and_line *, CORE_ADDR **,
++				 int *);
++
+ /* Given a string, return the line specified by it.  For commands like "list"
+    and "breakpoint".  */
+ 
+--- gdb-6.3/gdb/breakpoint.c.fix	Thu Jan 20 18:44:42 2005
++++ gdb-6.3/gdb/breakpoint.c	Thu Jan 20 19:07:48 2005
+@@ -1,7 +1,7 @@
+ /* Everything about breakpoints, for GDB.
+ 
+    Copyright 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994,
+-   1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004
++   1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005
+    Free Software Foundation, Inc.
+ 
+    This file is part of GDB.
+@@ -5231,10 +5231,40 @@ static void
+ breakpoint_sals_to_pc (struct symtabs_and_lines *sals,
+ 		       char *address)
+ {    
+-  int i;
+-  for (i = 0; i < sals->nelts; i++)
+-    {
+-      resolve_sal_pc (&sals->sals[i]);
++  int i, j, incr;
++  int num_pc_values = 1;
++
++  /* If a line has multiple pc values, we want to create an sal for
++     each pc value so we will end up creating n breakpoints.  */
++  for (i = 0; i < sals->nelts; i+=incr)
++    {
++      CORE_ADDR *pc_list;
++      incr = 1;
++
++      resolve_sal_pc_list (&sals->sals[i], &pc_list, &num_pc_values);
++      if (num_pc_values != 0)
++        sals->sals[i].pc = pc_list[0];
++      if (num_pc_values > 1)
++        {
++          struct symtab_and_line *new_sals = 
++            xmalloc ((sals->nelts + num_pc_values - 1) 
++                     * sizeof (struct symtab_and_line));
++          memcpy (new_sals, sals->sals, (i + 1) 
++                  * sizeof (struct symtab_and_line));
++          memcpy (&(new_sals[i + 1]), &sals->sals[i], 
++                  sizeof (struct symtab_and_line));
++          xfree (sals->sals);
++          sals->sals = new_sals;
++          sals->nelts += num_pc_values - 1;
++          for (j = 1; j < num_pc_values; ++j)
++            {
++              sals->sals[i + j].pc = pc_list[j];
++            }
++          incr = num_pc_values;
++        }
++
++      if (num_pc_values != 0)
++        xfree (pc_list);
+ 
+       /* It's possible for the PC to be nonzero, but still an illegal
+          value on some targets.
+@@ -5364,6 +5394,10 @@ break_command_1 (char *arg, int flag, in
+ 
+   if (!pending)
+     {
++      /* Resolve all line numbers to PC's and verify that the addresses
++         are ok for the target.  */
++      breakpoint_sals_to_pc (&sals, addr_start);
++
+       /* Make sure that all storage allocated to SALS gets freed.  */
+       make_cleanup (xfree, sals.sals);
+       
+@@ -5394,11 +5428,6 @@ break_command_1 (char *arg, int flag, in
+ 	make_cleanup (xfree, addr_string[i]);
+     }
+ 
+-  /* Resolve all line numbers to PC's and verify that the addresses
+-     are ok for the target.  */
+-  if (!pending)
+-    breakpoint_sals_to_pc (&sals, addr_start);
+-
+   /* Verify that condition can be parsed, before setting any
+      breakpoints.  Allocate a separate condition expression for each
+      breakpoint. */
+@@ -5629,14 +5658,16 @@ gdb_breakpoint (char *address, char *con
+ void
+ resolve_sal_pc (struct symtab_and_line *sal)
+ {
+-  CORE_ADDR pc;
++  CORE_ADDR *pc_list;
++  int num_pc_values;
+ 
+   if (sal->pc == 0 && sal->symtab != NULL)
+     {
+-      if (!find_line_pc (sal->symtab, sal->line, &pc))
++      if (!find_line_pc (sal->symtab, sal->line, &pc_list, &num_pc_values))
+ 	error ("No line %d in file \"%s\".",
+ 	       sal->line, sal->symtab->filename);
+-      sal->pc = pc;
++      sal->pc = pc_list[0];
++      xfree (pc_list);
+     }
+ 
+   if (sal->section == 0 && sal->symtab != NULL)
+@@ -5673,6 +5704,54 @@ resolve_sal_pc (struct symtab_and_line *
+     }
+ }
+ 
++/* Helper function for break_command_1 and disassemble_command.  */
++
++void
++resolve_sal_pc_list (struct symtab_and_line *sal, CORE_ADDR **pc_list,
++                     int *num_pc_values)
++{
++  *num_pc_values = 0;
++  if (sal->pc == 0 && sal->symtab != NULL)
++    {
++      if (!find_line_pc (sal->symtab, sal->line, pc_list, num_pc_values))
++	error ("No line %d in file \"%s\".",
++	       sal->line, sal->symtab->filename);
++      sal->pc = (*pc_list)[0];
++    }
++
++  if (sal->section == 0 && sal->symtab != NULL)
++    {
++      struct blockvector *bv;
++      struct block *b;
++      struct symbol *sym;
++      int index;
++
++      bv = blockvector_for_pc_sect (sal->pc, 0, &index, sal->symtab);
++      if (bv != NULL)
++	{
++	  b = BLOCKVECTOR_BLOCK (bv, index);
++	  sym = block_function (b);
++	  if (sym != NULL)
++	    {
++	      fixup_symbol_section (sym, sal->symtab->objfile);
++	      sal->section = SYMBOL_BFD_SECTION (sym);
++	    }
++	  else
++	    {
++	      /* It really is worthwhile to have the section, so we'll just
++	         have to look harder. This case can be executed if we have 
++	         line numbers but no functions (as can happen in assembly 
++	         source).  */
++
++	      struct minimal_symbol *msym;
++
++	      msym = lookup_minimal_symbol_by_pc (sal->pc);
++	      if (msym)
++		sal->section = SYMBOL_BFD_SECTION (msym);
++	    }
++	}
++    }
++}
+ void
+ break_command (char *arg, int from_tty)
+ {

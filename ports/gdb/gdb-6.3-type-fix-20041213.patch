@@ -1,0 +1,27 @@
+2004-12-13  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* dwarf2read.c (read_type_die): Ensure that structures, unions,
+	enumerations, and base types create symbols.
+
+--- gdb-6.3/gdb/dwarf2read.c.fix2	Mon Dec 13 19:44:08 2004
++++ gdb-6.3/gdb/dwarf2read.c	Mon Dec 13 20:00:42 2004
+@@ -7178,9 +7178,11 @@ read_type_die (struct die_info *die, str
+     case DW_TAG_structure_type:
+     case DW_TAG_union_type:
+       read_structure_type (die, cu);
++      process_structure_scope (die, cu);
+       break;
+     case DW_TAG_enumeration_type:
+       read_enumeration_type (die, cu);
++      process_enumeration_scope (die, cu);
+       break;
+     case DW_TAG_subprogram:
+     case DW_TAG_subroutine_type:
+@@ -7215,6 +7217,7 @@ read_type_die (struct die_info *die, str
+       break;
+     case DW_TAG_base_type:
+       read_base_type (die, cu);
++      new_symbol (die, die->type, cu);
+       break;
+     default:
+       complaint (&symfile_complaints, "unexepected tag in read_type_die: '%s'",

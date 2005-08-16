@@ -1,0 +1,29 @@
+2005-01-21  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* ia64-tdep.c (get_kernel_table): Don't set ktab_size
+	unless getunwind_table call is successful.
+
+--- gdb-6.3/gdb/ia64-tdep.c.fix	Fri Jan 21 19:56:10 2005
++++ gdb-6.3/gdb/ia64-tdep.c	Fri Jan 21 20:36:22 2005
+@@ -1,6 +1,6 @@
+ /* Target-dependent code for the IA-64 for GDB, the GNU debugger.
+ 
+-   Copyright 1999, 2000, 2001, 2002, 2003, 2004 Free Software
++   Copyright 1999, 2000, 2001, 2002, 2003, 2004, 2005 Free Software
+    Foundation, Inc.
+ 
+    This file is part of GDB.
+@@ -2371,9 +2371,11 @@ get_kernel_table (unw_word_t ip, unw_dyn
+ 
+   if (!ktab) 
+     {
+-      ktab_size = getunwind_table (NULL, 0);
+-      if ((int)ktab_size < 0)
++      size_t size;
++      size = getunwind_table (NULL, 0);
++      if ((int)size < 0)
+         return -UNW_ENOINFO;
++      ktab_size = size;
+       ktab = xmalloc (ktab_size);
+       getunwind_table (ktab, ktab_size);
+ 		          

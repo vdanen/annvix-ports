@@ -1,0 +1,38 @@
+2004-12-16  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* thread-db.c (clear_lwp_callback): Removed.
+	(thread_db_resume): Do not iterate and call
+	clear_lwp_callback.
+
+--- gdb-6.3/gdb/thread-db.c.fix	Thu Dec 16 16:32:13 2004
++++ gdb-6.3/gdb/thread-db.c	Thu Dec 16 16:32:30 2004
+@@ -822,19 +822,6 @@ thread_db_detach (char *args, int from_t
+   target_beneath->to_detach (args, from_tty);
+ }
+ 
+-static int
+-clear_lwpid_callback (struct thread_info *thread, void *dummy)
+-{
+-  /* If we know that our thread implementation is 1-to-1, we could save
+-     a certain amount of information; it's not clear how much, so we
+-     are always conservative.  */
+-
+-  thread->private->th_valid = 0;
+-  thread->private->ti_valid = 0;
+-
+-  return 0;
+-}
+-
+ static void
+ thread_db_resume (ptid_t ptid, int step, enum target_signal signo)
+ {
+@@ -845,9 +832,6 @@ thread_db_resume (ptid_t ptid, int step,
+   else if (is_thread (ptid))
+     ptid = lwp_from_thread (ptid);
+ 
+-  /* Clear cached data which may not be valid after the resume.  */
+-  iterate_over_threads (clear_lwpid_callback, NULL);
+-
+   target_beneath->to_resume (ptid, step, signo);
+ 
+   do_cleanups (old_chain);

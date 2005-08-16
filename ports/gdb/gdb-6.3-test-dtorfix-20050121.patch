@@ -1,0 +1,192 @@
+Index: gdb/testsuite/ChangeLog
+2005-01-21  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* gdb.cp/constructortest.exp: New test.
+	* gdb.cp/constructortest.cc: Ditto.
+	* gdb.cp/templates.exp: Change break of dtor to	be fully quoted.
+
+--- gdb-6.3/gdb/testsuite/gdb.cp/constructortest.cc.fix	Fri Jan 21 17:06:56 2005
++++ gdb-6.3/gdb/testsuite/gdb.cp/constructortest.cc	Fri Jan 21 17:05:18 2005
+@@ -0,0 +1,64 @@
++/* This testcase is part of GDB, the GNU debugger.
++
++   Copyright 2005 Free Software Foundation, Inc.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 2 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program; if not, write to the Free Software
++   Foundation, Inc., 59 Temple Place - Suite 330,
++   Boston, MA 02111-1307, USA.  */
++
++class A
++{
++  public:
++    A();
++    ~A();
++    int  k;
++  private:
++    int  x;
++};
++
++class B: public A
++{
++  public:
++    B();
++  private:
++    int  y;
++};
++
++int main(int argc, char *argv[])
++{
++  A* a = new A;
++  B* b = new B;
++  delete a;
++  delete b;
++  return 0;
++}
++
++A::A() /* Constructor A */
++{
++   x = 1; /* First line A */
++   k = 4; /* Second line A */
++}
++
++A::~A() /* Destructor A */
++{
++   x = 3; /* First line ~A */
++   k = 6; /* Second line ~A */
++}
++
++B::B()
++{
++   y = 2; /* First line B */
++   k = 5;
++}
++
+--- gdb-6.3/gdb/testsuite/gdb.cp/constructortest.exp.fix	Fri Jan 21 17:07:02 2005
++++ gdb-6.3/gdb/testsuite/gdb.cp/constructortest.exp	Fri Jan 21 17:05:29 2005
+@@ -0,0 +1,98 @@
++# This testcase is part of GDB, the GNU debugger.
++
++# Copyright 2005 Free Software Foundation, Inc.
++
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 2 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  
++
++# Check that GDB can break at multiple forms of constructors.
++
++if $tracelevel {
++    strace $tracelevel
++}
++
++set prms_id 0
++set bug_id 0
++
++set testfile "constructortest"
++set srcfile ${testfile}.cc
++set binfile ${objdir}/${subdir}/${testfile}
++if {[gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug c++}] != "" } {
++    return -1
++}
++
++gdb_exit
++gdb_start
++gdb_reinitialize_dir $srcdir/$subdir
++gdb_load ${binfile}
++
++#
++# Run to `main' where we begin our tests.
++#
++
++if ![runto_main] then {
++    gdb_suppress_tests
++}
++
++# Break on the various forms of the A::A constructor
++gdb_test_multiple "break A\:\:A" "breaking on A::A" {
++  -re "0. cancel.*\[\r\n\]*.1. all.*\[\r\n\]*.2. A::A\\(\\) at .*\[\r\n\]*.3. A::A\\\$base\\(\\) at .*\[\r\n\]*> $" {
++            gdb_test "1" \
++                ".*Multiple breakpoints were set.*" \
++                "break on multiple constructors"
++  }
++}
++        
++# Verify that we break for the A constructor two times
++# Once for new A and once for new B
++gdb_continue_to_breakpoint "First line A"
++gdb_test "bt" "#0.*A.*#1.*main.*" "Verify in in-charge A::A"
++gdb_continue_to_breakpoint "First line A"
++gdb_test "bt" "#0.*A.*#1.*B.*#2.*main.*" "Verify in not-in-charge A::A"
++
++# Now do the same for destructors
++gdb_test "break 'A::~A()'" ""
++gdb_test "break 'A::~A\$base()'" ""
++
++# Verify that we break for the A destructor two times
++# Once for delete a and once for delete b
++gdb_continue_to_breakpoint "First line ~A"
++gdb_test "bt" "#0.*~A.*#1.*main.*" "Verify in in-charge A::~A"
++gdb_continue_to_breakpoint "First line ~A"
++gdb_test "bt" "#0.*~A.*#1.*~B.*#2.*main.*" "Verify in not-in-charge A::~A"
++
++
++# Verify that we can break by line number in a constructor and find
++# both occurrences
++runto_main
++gdb_test "break 'A::A()'" "" "break in constructor A 2"
++gdb_continue_to_breakpoint "First line A"
++set second_line [gdb_get_line_number "Second line A"]
++gdb_test "break $second_line" ".*$second_line.*$second_line.*Multiple breakpoints were set.*" "break by line in constructor"
++gdb_continue_to_breakpoint "Second line A"
++gdb_test "bt" "#0.*A.*#1.*main.*" "Verify in in-charge A::A second line"
++gdb_continue_to_breakpoint "Second line A"
++gdb_test "bt" "#0.*A.*#1.*B.*#2.*main.*" "Verify in not-in-charge A::A second line"
++
++# Verify that we can break by line number in a destructor and find
++# both occurrences
++gdb_test "break 'A::~A()'" "" "break in constructor ~A 2"
++gdb_continue_to_breakpoint "First line ~A"
++set second_line_dtor [gdb_get_line_number "Second line ~A"]
++gdb_test "break $second_line_dtor" ".*$second_line_dtor.*$second_line_dtor.*Multiple breakpoints were set.*" "break by line in destructor"
++gdb_continue_to_breakpoint "Second line ~A"
++gdb_test "bt" "#0.*A.*#1.*main.*" "Verify in in-charge A::~A second line"
++gdb_continue_to_breakpoint "Second line ~A"
++gdb_test "bt" "#0.*A.*#1.*B.*#2.*main.*" "Verify in not-in-charge A::~A second line"
++
+--- gdb-6.3/gdb/testsuite/gdb.cp/templates.exp.fix	Fri Jan 21 17:07:10 2005
++++ gdb-6.3/gdb/testsuite/gdb.cp/templates.exp	Fri Jan 21 17:09:09 2005
+@@ -1,4 +1,4 @@
+-# Copyright 1992, 1994, 1995, 1996, 1997, 1999, 2000, 2002, 2003, 2004
++# Copyright 1992, 1994, 1995, 1996, 1997, 1999, 2000, 2002, 2003, 2004, 2005
+ # Free Software Foundation, Inc.
+ 
+ # This program is free software; you can redistribute it and/or modify
+@@ -142,7 +142,7 @@ proc test_template_breakpoints {} {
+ # See CLLbs14792
+     if {$hp_aCC_compiler} {setup_xfail hppa*-*-* CLLbs14792}
+ 
+-    gdb_test_multiple "break T5<int>::~T5" "destructor_breakpoint" {
++    gdb_test_multiple "break 'T5<int>::~T5()'" "destructor_breakpoint" {
+ 	-re "Breakpoint.*at.* file .*${testfile}.cc, line.*$gdb_prompt $"
+ 	{
+ 	    pass "destructor breakpoint"

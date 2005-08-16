@@ -1,0 +1,446 @@
+2005-04-27  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* ia64-tdep.c (ia64_pseudo_register_read): Change logic to get
+	rse regs by using libunwind with special accessors.  If libunwind
+	method fails, then use old method of calculating using bsp.
+	(ia64_sigtramp_frame_prev_register): Fix up debug statement
+	to properly output register numbers.
+	(ia64_libunwind_frame_prev_register): Ditto.
+	(ia64_access_rse_regs): New function.
+	(ia64_libunwind_sigtramp_frame_this_id): Ditto.
+	(ia64_libunwind_sigtramp_frame_prev_register): Ditto.
+	(ia64_libunwind_sigtramp_frame_unwind): New struct.
+	(ia64_libunwind_sigtramp_frame_sniffer): Return new struct above.
+	(ia64_unw_rse_accessors): New accessors.
+	* libunwind-frame.h (struct libunwind_descr): Add new
+	special_accessors field.
+	(libunwind_frame_get_reg_special): New prototype.
+	* libunwind-frame.c: Access new special accessors saved in gdbarch.
+	(libunwind_frame_get_special): New function.
+
+--- gdb-6.3/gdb/ia64-tdep.c.fix2	2005-04-27 19:03:11.000000000 -0400
++++ gdb-6.3/gdb/ia64-tdep.c	2005-04-27 19:03:48.000000000 -0400
+@@ -698,24 +698,33 @@ ia64_pseudo_register_read (struct gdbarc
+ {
+   if (regnum >= V32_REGNUM && regnum <= V127_REGNUM)
+     {
+-      ULONGEST bsp;
+-      ULONGEST cfm;
+-      CORE_ADDR reg;
+-      regcache_cooked_read_unsigned (regcache, IA64_BSP_REGNUM, &bsp);
+-      regcache_cooked_read_unsigned (regcache, IA64_CFM_REGNUM, &cfm);
+-
+-      /* The bsp points at the end of the register frame so we
+-	 subtract the size of frame from it to get start of register frame.  */
+-      bsp = rse_address_add (bsp, -(cfm & 0x7f));
+- 
+-      if ((cfm & 0x7f) > regnum - V32_REGNUM) 
+-	{
+-	  ULONGEST reg_addr = rse_address_add (bsp, (regnum - V32_REGNUM));
+-	  reg = read_memory_integer ((CORE_ADDR)reg_addr, 8);
+-	  store_unsigned_integer (buf, register_size (current_gdbarch, regnum), reg);
++      /* First try and use the libunwind special reg accessor, otherwise fallback to
++	 standard logic.  */
++      if (!libunwind_is_initialized ()
++	  || libunwind_get_reg_special (gdbarch, regnum, buf) != 0)
++	{
++	  /* The fallback position is to assume that r32-r127 are found sequentially
++	     in memory starting at $bof.  This isn't always true, but without libunwind,
++	     this is the best we can do.  */
++	  ULONGEST cfm;
++	  ULONGEST bsp;
++	  CORE_ADDR reg;
++	  regcache_cooked_read_unsigned (regcache, IA64_BSP_REGNUM, &bsp);
++	  regcache_cooked_read_unsigned (regcache, IA64_CFM_REGNUM, &cfm);
++	  
++	  /* The bsp points at the end of the register frame so we
++	     subtract the size of frame from it to get start of register frame.  */
++	  bsp = rse_address_add (bsp, -(cfm & 0x7f));
++	  
++	  if ((cfm & 0x7f) > regnum - V32_REGNUM) 
++	    {
++	      ULONGEST reg_addr = rse_address_add (bsp, (regnum - V32_REGNUM));
++	      reg = read_memory_integer ((CORE_ADDR)reg_addr, 8);
++	      store_unsigned_integer (buf, register_size (current_gdbarch, regnum), reg);
++	    }
++	  else
++	    store_unsigned_integer (buf, register_size (current_gdbarch, regnum), 0);
+ 	}
+-      else
+-	store_unsigned_integer (buf, register_size (current_gdbarch, regnum), 0);
+     }
+   else if (IA64_NAT0_REGNUM <= regnum && regnum <= IA64_NAT31_REGNUM)
+     {
+@@ -1924,7 +1933,7 @@ ia64_sigtramp_frame_init_saved_regs (str
+ 	SIGCONTEXT_REGISTER_ADDRESS (cache->base, IA64_PFS_REGNUM);
+       cache->saved_regs[IA64_LC_REGNUM] = 
+ 	SIGCONTEXT_REGISTER_ADDRESS (cache->base, IA64_LC_REGNUM);
+-      for (regno = IA64_GR1_REGNUM; regno <= IA64_GR31_REGNUM; regno++)
++      for (regno = IA64_GR1_REGNUM; regno <= IA64_GR127_REGNUM; regno++)
+ 	cache->saved_regs[regno] =
+ 	  SIGCONTEXT_REGISTER_ADDRESS (cache->base, regno);
+       for (regno = IA64_BR0_REGNUM; regno <= IA64_BR7_REGNUM; regno++)
+@@ -2057,8 +2066,13 @@ ia64_sigtramp_frame_prev_register (struc
+   if (gdbarch_debug >= 1)
+     fprintf_unfiltered (gdb_stdlog,
+ 			"sigtramp prev register <%s> is 0x%s\n",
+-			(((unsigned) regnum <= IA64_NAT127_REGNUM)
+-			 ? ia64_register_names[regnum] : "r??"), 
++			(regnum < IA64_GR32_REGNUM
++			 || (regnum > IA64_GR127_REGNUM
++			     && regnum < LAST_PSEUDO_REGNUM))
++			 ? ia64_register_names[regnum]
++			 : (regnum < LAST_PSEUDO_REGNUM
++			    ? ia64_register_names[regnum-IA64_GR32_REGNUM+V32_REGNUM]
++			    : "OUT_OF_RANGE"),
+ 			paddr_nz (extract_unsigned_integer (valuep, 8)));
+ }
+ 
+@@ -2327,6 +2341,113 @@ ia64_access_fpreg (unw_addr_space_t as, 
+   return 0;
+ }
+ 
++/* Libunwind callback accessor function for top-level rse registers.  */
++static int
++ia64_access_rse_reg (unw_addr_space_t as, unw_regnum_t uw_regnum, unw_word_t *val, 
++		     int write, void *arg)
++{
++  int regnum = ia64_uw2gdb_regnum (uw_regnum);
++  unw_word_t bsp, sof, sol, cfm, psr, ip;
++  long new_sof, old_sof;
++  
++  if (write)
++    {
++      if (regnum < 0)
++	/* ignore writes to pseudo-registers such as UNW_IA64_PROC_STARTI.  */
++	return 0;
++  
++      switch (uw_regnum)
++	{
++	case UNW_REG_IP:
++	  ia64_write_pc (*val, inferior_ptid);
++	  break;
++
++	case UNW_IA64_AR_BSPSTORE:
++	  write_register (IA64_BSP_REGNUM, *val);
++	  break;
++	  
++	case UNW_IA64_AR_BSP:
++	case UNW_IA64_BSP:
++	  /* Account for the fact that ptrace() expects bsp to point
++	     after the current register frame.  */
++	  cfm = read_register (IA64_CFM_REGNUM);
++	  sof = (cfm & 0x7f);
++	  bsp = ia64_rse_skip_regs (*val, sof);
++	  write_register (IA64_BSP_REGNUM, bsp);
++	  break;
++	  
++	case UNW_IA64_CFM:
++	  /* If we change CFM, we need to adjust ptrace's notion of
++	     bsp accordingly, so that the real bsp remains
++	     unchanged.  */
++	  bsp = read_register (IA64_BSP_REGNUM);
++	  cfm = read_register (IA64_CFM_REGNUM);
++	  old_sof = (cfm & 0x7f);
++	  new_sof = (*val & 0x7f);
++	  if (old_sof != new_sof)
++	    {
++	      bsp = ia64_rse_skip_regs (bsp, -old_sof + new_sof);
++	      write_register (IA64_BSP_REGNUM, bsp);
++	    }
++	  write_register (IA64_CFM_REGNUM, *val);
++	  break;
++	  
++	default:
++	  write_register (regnum, *val);
++	  break;
++	}
++      if (gdbarch_debug >= 1)
++	fprintf_unfiltered (gdb_stdlog, 
++			    "  access_rse_reg: to cache: %4s=0x%s\n",
++			    (((unsigned) regnum <= IA64_NAT127_REGNUM)
++			     ? ia64_register_names[regnum] : "r??"), 
++			    paddr_nz (*val));
++    }
++  else
++    {
++      switch (uw_regnum)
++	{
++	case UNW_REG_IP:
++	  /* Libunwind expects to see the pc value which means the slot number
++	     from the psr must be merged with the ip word address.  */
++	  ip = read_register (IA64_IP_REGNUM); 
++	  psr = read_register (IA64_PSR_REGNUM);
++	  *val = ip | ((psr >> 41) & 0x3);
++	  break;
++	  
++	case UNW_IA64_AR_BSP:
++	  /* Libunwind expects to see the beginning of the current register
++	     frame so we must account for the fact that ptrace() will return a value
++	     for bsp that points *after* the current register frame.  */
++	  bsp = read_register (IA64_BSP_REGNUM);
++	  cfm = read_register (IA64_CFM_REGNUM);
++	  sof = (cfm & 0x7f);
++	  *val = ia64_rse_skip_regs (bsp, -sof);
++	  break;
++	  
++	case UNW_IA64_AR_BSPSTORE:
++	  /* Libunwind wants bspstore to be after the current register frame.
++	     This is what ptrace() and gdb treats as the regular bsp value.  */
++	  *val = read_register (IA64_BSP_REGNUM);
++	  break;
++
++	default:
++	  /* For all other registers, just read the value directly.  */
++	  *val = read_register (regnum);
++	  break;
++	}
++    }
++      
++  if (gdbarch_debug >= 1)
++    fprintf_unfiltered (gdb_stdlog, 
++			"  access_rse_reg: from cache: %4s=0x%s\n",
++			(((unsigned) regnum <= IA64_NAT127_REGNUM)
++			 ? ia64_register_names[regnum] : "r??"), 
++			paddr_nz (*val));
++
++  return 0;
++}
++
+ /* Libunwind callback accessor function for accessing memory.  */
+ static int
+ ia64_access_mem (unw_addr_space_t as,
+@@ -2602,7 +2723,7 @@ ia64_get_dyn_info_list (unw_addr_space_t
+ 
+ static void
+ ia64_libunwind_frame_this_id (struct frame_info *next_frame, void **this_cache,
+-		      struct frame_id *this_id)
++			      struct frame_id *this_id)
+ {
+   char buf[8];
+   CORE_ADDR bsp;
+@@ -2723,8 +2844,13 @@ ia64_libunwind_frame_prev_register (stru
+   if (gdbarch_debug >= 1)
+     fprintf_unfiltered (gdb_stdlog,
+ 			"libunwind prev register <%s> is 0x%s\n",
+-			(((unsigned) regnum <= IA64_NAT127_REGNUM)
+-			 ? ia64_register_names[regnum] : "r??"), 
++			(regnum < IA64_GR32_REGNUM
++			 || (regnum > IA64_GR127_REGNUM
++			     && regnum < LAST_PSEUDO_REGNUM))
++			 ? ia64_register_names[regnum]
++			 : (regnum < LAST_PSEUDO_REGNUM
++			    ? ia64_register_names[regnum-IA64_GR32_REGNUM+V32_REGNUM]
++			    : "OUT_OF_RANGE"),
+ 			paddr_nz (extract_unsigned_integer (valuep, 8)));
+ }
+ 
+@@ -2744,13 +2870,80 @@ ia64_libunwind_frame_sniffer (struct fra
+   return NULL;
+ }
+ 
++static void
++ia64_libunwind_sigtramp_frame_this_id (struct frame_info *next_frame, void **this_cache,
++				       struct frame_id *this_id)
++{
++  char buf[8];
++  CORE_ADDR bsp;
++  struct frame_id id;
++  CORE_ADDR prev_ip;
++
++  libunwind_frame_this_id (next_frame, this_cache, &id);
++  if (frame_id_eq (id, null_frame_id))
++    {
++      (*this_id) = null_frame_id;
++      return;
++    }
++
++  /* We must add the bsp as the special address for frame comparison 
++     purposes.  */
++  frame_unwind_register (next_frame, IA64_BSP_REGNUM, buf);
++  bsp = extract_unsigned_integer (buf, 8);
++
++  /* For a sigtramp frame, we don't make the check for previous ip being 0.  */
++  (*this_id) = frame_id_build_special (id.stack_addr, id.code_addr, bsp);
++
++  if (gdbarch_debug >= 1)
++    fprintf_unfiltered (gdb_stdlog,
++			"libunwind sigtramp frame id: code 0x%s, stack 0x%s, special 0x%s, next_frame %p\n",
++			paddr_nz (id.code_addr), paddr_nz (id.stack_addr), 
++			paddr_nz (bsp), next_frame);
++}
++
++static void
++ia64_libunwind_sigtramp_frame_prev_register (struct frame_info *next_frame,
++					     void **this_cache,
++					     int regnum, int *optimizedp,
++					     enum lval_type *lvalp, CORE_ADDR *addrp,
++					     int *realnump, void *valuep)
++
++{
++  CORE_ADDR prev_ip, addr;
++  int realnum, optimized;
++  enum lval_type lval;
++
++
++  /* If the previous frame pc value is 0, then we want to use the SIGCONTEXT
++     method of getting previous registers.  */
++  libunwind_frame_prev_register (next_frame, this_cache, IA64_IP_REGNUM, 
++		  		 &optimized, &lval, &addr, &realnum, &prev_ip);
++
++  if (prev_ip == 0)
++    {
++      void *tmp_cache = NULL;
++      ia64_sigtramp_frame_prev_register (next_frame, &tmp_cache, regnum, optimizedp, lvalp,
++					 addrp, realnump, valuep);
++    }
++  else
++    ia64_libunwind_frame_prev_register (next_frame, this_cache, regnum, optimizedp, lvalp,
++					addrp, realnump, valuep);
++}
++
++static const struct frame_unwind ia64_libunwind_sigtramp_frame_unwind =
++{
++  SIGTRAMP_FRAME,
++  ia64_libunwind_sigtramp_frame_this_id,
++  ia64_libunwind_sigtramp_frame_prev_register
++};
++
+ static const struct frame_unwind *
+ ia64_libunwind_sigtramp_frame_sniffer (struct frame_info *next_frame)
+ {
+   if (libunwind_is_initialized ())
+     {
+       if (libunwind_sigtramp_frame_sniffer (next_frame))
+-        return &ia64_sigtramp_frame_unwind;
++        return &ia64_libunwind_sigtramp_frame_unwind;
+       return NULL;
+     }
+   else
+@@ -2770,6 +2963,22 @@ static unw_accessors_t ia64_unw_accessor
+   /* get_proc_name */
+ };
+ 
++/* Set of special libunwind callback acccessor functions specific for accessing
++   the rse registers.  At the top of the stack, we want libunwind to figure out
++   how to read r32 - r127.  Though usually they are found sequentially in memory
++   starting from $bof, this is not always true.  */
++static unw_accessors_t ia64_unw_rse_accessors =
++{
++  ia64_find_proc_info_x,
++  ia64_put_unwind_info,
++  ia64_get_dyn_info_list,
++  ia64_access_mem,
++  ia64_access_rse_reg,
++  ia64_access_fpreg,
++  /* resume */
++  /* get_proc_name */
++};
++
+ /* Set of ia64 gdb libunwind-frame callbacks and data for generic libunwind-frame code to use.  */
+ static struct libunwind_descr ia64_libunwind_descr =
+ {
+@@ -2777,6 +2986,7 @@ static struct libunwind_descr ia64_libun
+   ia64_uw2gdb_regnum, 
+   ia64_is_fpreg, 
+   &ia64_unw_accessors,
++  &ia64_unw_rse_accessors,
+ };
+ 
+ #endif /* HAVE_LIBUNWIND_IA64_H  */
+--- gdb-6.3/gdb/libunwind-frame.c.fix2	2005-04-27 19:03:20.000000000 -0400
++++ gdb-6.3/gdb/libunwind-frame.c	2005-04-27 19:03:38.000000000 -0400
+@@ -121,6 +121,7 @@ libunwind_frame_set_descr (struct gdbarc
+   arch_descr->uw2gdb = descr->uw2gdb;
+   arch_descr->is_fpreg = descr->is_fpreg;
+   arch_descr->accessors = descr->accessors;
++  arch_descr->special_accessors = descr->special_accessors;
+ }
+ 
+ static struct libunwind_frame_cache *
+@@ -383,6 +384,58 @@ libunwind_sigtramp_frame_sniffer (struct
+   return NULL;
+ }
+ 
++/* The following routine is for accessing special registers of the top frame.
++   A special set of accessors must be given that work without frame info.
++   This is used by ia64 to access the rse registers r32-r127.  While they
++   are usually located at BOF, this is not always true and only the libunwind
++   info can decipher where they actually are.  */
++int
++libunwind_get_reg_special (struct gdbarch *gdbarch, int regnum, void *buf)
++{
++  unw_cursor_t cursor;
++  unw_accessors_t *acc;
++  unw_addr_space_t as;
++  struct libunwind_descr *descr;
++  int ret;
++  unw_regnum_t uw_regnum;
++  unw_word_t intval;
++  unw_fpreg_t fpval;
++  void *ptr;
++
++
++  descr = libunwind_descr (gdbarch);
++  acc = descr->special_accessors;
++  as =  unw_create_addr_space_p (acc,
++				 TARGET_BYTE_ORDER == BFD_ENDIAN_BIG
++				 ? __BIG_ENDIAN
++				 : __LITTLE_ENDIAN);
++
++  ret = unw_init_remote_p (&cursor, as, NULL);
++  if (ret < 0)
++    return -1;
++
++  uw_regnum = descr->gdb2uw (regnum);
++
++  if (descr->is_fpreg (uw_regnum))
++    {
++      ret = unw_get_fpreg_p (&cursor, uw_regnum, &fpval);
++      ptr = &fpval;
++    }
++  else
++    {
++      ret = unw_get_reg_p (&cursor, uw_regnum, &intval);
++      ptr = &intval;
++    }
++
++  if (ret < 0)
++    return -1;
++
++  if (buf)
++    memcpy (buf, ptr, register_size (current_gdbarch, regnum));
++
++  return 0;
++}
++  
+ static int
+ libunwind_load (void)
+ {
+--- gdb-6.3/gdb/libunwind-frame.h.fix2	2005-04-27 19:03:26.000000000 -0400
++++ gdb-6.3/gdb/libunwind-frame.h	2005-04-27 19:03:41.000000000 -0400
+@@ -25,6 +25,7 @@
+ 
+ struct frame_info;
+ struct frame_id;
++struct gdbarch;
+ 
+ #ifndef LIBUNWIND_FRAME_H
+ #define LIBUNWIND_FRAME_H 1
+@@ -37,6 +38,7 @@ struct libunwind_descr
+   int (*uw2gdb) (int);
+   int (*is_fpreg) (int);
+   void *accessors;
++  void *special_accessors;
+ };
+ 
+ const struct frame_unwind *libunwind_frame_sniffer (struct frame_info *next_frame);
+@@ -60,6 +62,8 @@ int libunwind_search_unwind_table (void 
+ unw_word_t libunwind_find_dyn_list (unw_addr_space_t, unw_dyn_info_t *,
+ 				    void *);
+ 
++int libunwind_get_reg_special (struct gdbarch *gdbarch, int regnum, void *buf);
++
+ #endif /* libunwind-frame.h */
+ 
+ #endif /* HAVE_LIBUNWIND_H  */

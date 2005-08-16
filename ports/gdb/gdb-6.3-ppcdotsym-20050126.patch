@@ -1,0 +1,287 @@
+2005-01-26  Andrew Cagney  <cagney@gnu.org>
+
+	* elfread.c (elf_symtab_read): Always read in the dynamic syms.
+	Obtain and iterate over the synthetic symbols.
+
+Date: Tue, 25 Jan 2005 21:00:11 +1030
+From: Alan Modra <amodra@bigpond.net.au>
+
+As well as fixing the above, I've restricted the relocs returned by
+_bfd_elf_canonicalize_dynamic_reloc to those for loadable sections.
+The idea is to exclude debug relocs, and any other weird stuff that
+generally isn't of interest for "objdump -dR".  I see gdb makes
+calls to bfd_canonicalize_dynamic_reloc too, but I think gdb/dbxread.c
+and gdb/solib-frv.c aren't interested in debug relocs either.
+
+bfd/
+	* elf.c (_bfd_elf_get_dynamic_reloc_upper_bound): Only include
+	loadable reloc sections.
+	(_bfd_elf_canonicalize_dynamic_reloc): Likewise.
+	(_bfd_elf_get_synthetic_symtab): Return 0 if no dynamic syms.
+
+Index: ./gdb/elfread.c
+===================================================================
+RCS file: /cvs/src/src/gdb/elfread.c,v
+retrieving revision 1.47
+diff -p -u -r1.47 elfread.c
+--- ./gdb/elfread.c	23 Oct 2004 16:18:08 -0000	1.47
++++ ./gdb/elfread.c	26 Jan 2005 18:34:36 -0000
+@@ -143,12 +143,7 @@ record_minimal_symbol (char *name, CORE_
+ static void
+ elf_symtab_read (struct objfile *objfile, int dynamic)
+ {
+-  long storage_needed;
+-  asymbol *sym;
+-  asymbol **symbol_table;
+-  long number_of_symbols;
+   long i;
+-  struct cleanup *back_to;
+   CORE_ADDR symaddr;
+   CORE_ADDR offset;
+   enum minimal_symbol_type ms_type;
+@@ -165,37 +160,125 @@ elf_symtab_read (struct objfile *objfile
+   struct dbx_symfile_info *dbx = objfile->deprecated_sym_stab_info;
+   int stripped = (bfd_get_symcount (objfile->obfd) == 0);
+ 
++  long static_storage;
++  long nr_static_syms;
++  struct bfd_symbol **static_sym_table;
++  long dynamic_storage;
++  long nr_dynamic_syms;
++  struct bfd_symbol **dynamic_sym_table;
++  long nr_synth_syms;
++  struct bfd_symbol *synth_syms;
++
++  /* The working table (either dynamic or static dependant on the
++     executable).  */
++  struct bfd_symbol **symbol_table;
++  long number_of_symbols;
++
++  struct cleanup *cleanups;
++  struct cleanup *discards;
++  
++  /* Compute the amount of dynamic / static storage space needed.  */
++  /* NOTE: Dynamic symbols are always read in - they are needed by the
++     synthetic symbols.  */
++  dynamic_storage = bfd_get_dynamic_symtab_upper_bound (objfile->obfd);
+   if (dynamic)
+     {
+-      storage_needed = bfd_get_dynamic_symtab_upper_bound (objfile->obfd);
+-
+       /* Nothing to be done if there is no dynamic symtab.  */
+-      if (storage_needed < 0)
++      if (dynamic_storage < 0)
+ 	return;
++      static_storage = 0;
+     }
+   else
+     {
+-      storage_needed = bfd_get_symtab_upper_bound (objfile->obfd);
+-      if (storage_needed < 0)
+-	error ("Can't read symbols from %s: %s", bfd_get_filename (objfile->obfd),
++      static_storage = bfd_get_symtab_upper_bound (objfile->obfd);
++      if (static_storage < 0)
++	error ("Can't read symbols from %s: %s",
++	       bfd_get_filename (objfile->obfd),
+ 	       bfd_errmsg (bfd_get_error ()));
++      if (dynamic_storage < 0)
++	dynamic_storage = 0;
+     }
+-  if (storage_needed > 0)
+-    {
+-      symbol_table = (asymbol **) xmalloc (storage_needed);
+-      back_to = make_cleanup (xfree, symbol_table);
+-      if (dynamic)
+-	number_of_symbols = bfd_canonicalize_dynamic_symtab (objfile->obfd,
+-							     symbol_table);
+-      else
+-	number_of_symbols = bfd_canonicalize_symtab (objfile->obfd, symbol_table);
+-      if (number_of_symbols < 0)
+-	error ("Can't read symbols from %s: %s", bfd_get_filename (objfile->obfd),
+-	       bfd_errmsg (bfd_get_error ()));
+ 
+-      for (i = 0; i < number_of_symbols; i++)
++  /* Nothing to read.  */
++  if (static_storage <= 0 && dynamic_storage <= 0)
++    return;
++
++  if (dynamic_storage > 0)
++    {
++      dynamic_sym_table = (asymbol **) xmalloc (dynamic_storage);
++      nr_dynamic_syms = bfd_canonicalize_dynamic_symtab (objfile->obfd,
++							 dynamic_sym_table);
++    }
++  else
++    {
++      dynamic_sym_table = NULL;
++      nr_dynamic_syms = 0;
++    }
++    
++  if (static_storage > 0)
++    {
++      static_sym_table = (asymbol **) xmalloc (static_storage);
++      nr_static_syms = bfd_canonicalize_symtab (objfile->obfd,
++						static_sym_table);
++    }
++  else
++    {
++      static_sym_table = NULL;
++      nr_static_syms = 0;
++    }
++    
++  if (nr_static_syms < 0 && nr_dynamic_syms < 0)
++    {
++      xfree (dynamic_sym_table);
++      xfree (static_sym_table);
++      error ("Can't read symbols from %s: %s",
++	     bfd_get_filename (objfile->obfd),
++	     bfd_errmsg (bfd_get_error ()));
++    }
++  
++  /* And the synthetic symbols, set up a cleanup for them also but
++     only for when there is an error.  */
++  nr_synth_syms = bfd_get_synthetic_symtab (objfile->obfd,
++					    nr_static_syms, static_sym_table,
++					    nr_dynamic_syms, dynamic_sym_table,
++					    &synth_syms);
++  if (nr_synth_syms < 0)
++    nr_synth_syms = 0;
++  
++  /* If things go ok not everything should be freed.  Split things
++     into both cleanups and discards.  */
++  cleanups = make_cleanup (null_cleanup, NULL);
++  make_cleanup (xfree, static_sym_table);
++
++  discards = make_cleanup (null_cleanup, NULL);
++  /* The synth_syms need to be retained.  Unlike static_sym_table,
++     it's a table of symbols and not pointers to the symbols.  */
++  make_cleanup (xfree, synth_syms);
++  /* The function elf_slurp_reloc_table_from_section points relocation
++     entries (look for relent->sym_ptr_ptr = ps) at the
++     dynamic_sym_table table, hence it needs to be retained.  */
++  make_cleanup (xfree, dynamic_sym_table);
++  
++  if (dynamic)
++    {
++      number_of_symbols = nr_dynamic_syms;
++      symbol_table = dynamic_sym_table;
++    }
++  else
++    {
++      number_of_symbols = nr_static_syms;
++      symbol_table = static_sym_table;
++    }
++  
++  if (1) /* HACK: Stop need to re-indent below!  */
++    {
++      for (i = 0; i < number_of_symbols + nr_synth_syms; i++)
+ 	{
+-	  sym = symbol_table[i];
++	  struct bfd_symbol *sym;
++	  if (i < number_of_symbols)
++	    sym = symbol_table[i];
++	  else
++	    sym = &synth_syms[i - number_of_symbols];
+ 	  if (sym->name == NULL || *sym->name == '\0')
+ 	    {
+ 	      /* Skip names that don't exist (shouldn't happen), or names
+@@ -448,8 +531,9 @@ elf_symtab_read (struct objfile *objfile
+ 	      ELF_MAKE_MSYMBOL_SPECIAL (sym, msym);
+ 	    }
+ 	}
+-      do_cleanups (back_to);
+     }
++  discard_cleanups (discards);
++  do_cleanups (cleanups);
+ }
+ 
+ /* Scan and build partial symbols for a symbol file.
+Index: ./bfd/elf.c
+===================================================================
+RCS file: /cvs/src/src/bfd/elf.c,v
+retrieving revision 1.260
+diff -u -p -r1.260 elf.c
+--- ./bfd/elf.c	7 Jan 2005 09:52:00 -0000	1.260
++++ ./bfd/elf.c	25 Jan 2005 10:07:51 -0000
+@@ -5977,10 +5977,10 @@ _bfd_elf_canonicalize_dynamic_symtab (bf
+   return symcount;
+ }
+ 
+-/* Return the size required for the dynamic reloc entries.  Any
+-   section that was actually installed in the BFD, and has type
+-   SHT_REL or SHT_RELA, and uses the dynamic symbol table, is
+-   considered to be a dynamic reloc section.  */
++/* Return the size required for the dynamic reloc entries.  Any loadable
++   section that was actually installed in the BFD, and has type SHT_REL
++   or SHT_RELA, and uses the dynamic symbol table, is considered to be a
++   dynamic reloc section.  */
+ 
+ long
+ _bfd_elf_get_dynamic_reloc_upper_bound (bfd *abfd)
+@@ -5996,7 +5996,8 @@ _bfd_elf_get_dynamic_reloc_upper_bound (
+ 
+   ret = sizeof (arelent *);
+   for (s = abfd->sections; s != NULL; s = s->next)
+-    if (elf_section_data (s)->this_hdr.sh_link == elf_dynsymtab (abfd)
++    if ((s->flags & SEC_LOAD) != 0
++	&& elf_section_data (s)->this_hdr.sh_link == elf_dynsymtab (abfd)
+ 	&& (elf_section_data (s)->this_hdr.sh_type == SHT_REL
+ 	    || elf_section_data (s)->this_hdr.sh_type == SHT_RELA))
+       ret += ((s->size / elf_section_data (s)->this_hdr.sh_entsize)
+@@ -6005,14 +6006,13 @@ _bfd_elf_get_dynamic_reloc_upper_bound (
+   return ret;
+ }
+ 
+-/* Canonicalize the dynamic relocation entries.  Note that we return
+-   the dynamic relocations as a single block, although they are
+-   actually associated with particular sections; the interface, which
+-   was designed for SunOS style shared libraries, expects that there
+-   is only one set of dynamic relocs.  Any section that was actually
+-   installed in the BFD, and has type SHT_REL or SHT_RELA, and uses
+-   the dynamic symbol table, is considered to be a dynamic reloc
+-   section.  */
++/* Canonicalize the dynamic relocation entries.  Note that we return the
++   dynamic relocations as a single block, although they are actually
++   associated with particular sections; the interface, which was
++   designed for SunOS style shared libraries, expects that there is only
++   one set of dynamic relocs.  Any loadable section that was actually
++   installed in the BFD, and has type SHT_REL or SHT_RELA, and uses the
++   dynamic symbol table, is considered to be a dynamic reloc section.  */
+ 
+ long
+ _bfd_elf_canonicalize_dynamic_reloc (bfd *abfd,
+@@ -6033,7 +6033,8 @@ _bfd_elf_canonicalize_dynamic_reloc (bfd
+   ret = 0;
+   for (s = abfd->sections; s != NULL; s = s->next)
+     {
+-      if (elf_section_data (s)->this_hdr.sh_link == elf_dynsymtab (abfd)
++      if ((s->flags & SEC_LOAD) != 0
++	  && elf_section_data (s)->this_hdr.sh_link == elf_dynsymtab (abfd)
+ 	  && (elf_section_data (s)->this_hdr.sh_type == SHT_REL
+ 	      || elf_section_data (s)->this_hdr.sh_type == SHT_RELA))
+ 	{
+@@ -7908,7 +7909,7 @@ long
+ _bfd_elf_get_synthetic_symtab (bfd *abfd,
+ 			       long symcount ATTRIBUTE_UNUSED,
+ 			       asymbol **syms ATTRIBUTE_UNUSED,
+-			       long dynsymcount ATTRIBUTE_UNUSED,
++			       long dynsymcount,
+ 			       asymbol **dynsyms,
+ 			       asymbol **ret)
+ {
+@@ -7924,10 +7925,14 @@ _bfd_elf_get_synthetic_symtab (bfd *abfd
+   char *names;
+   asection *plt;
+ 
++  *ret = NULL;
++
+   if ((abfd->flags & (DYNAMIC | EXEC_P)) == 0)
+     return 0;
+ 
+-  *ret = NULL;
++  if (dynsymcount <= 0)
++    return 0;
++
+   if (!bed->plt_sym_val)
+     return 0;
+ 

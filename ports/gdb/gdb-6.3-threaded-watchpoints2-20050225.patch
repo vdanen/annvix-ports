@@ -1,0 +1,878 @@
+2005-02-28  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* config/i386/nm-linux.h: Change dr register routines to
+	accept a ptid_t first argument.  Change all calling macros
+	to default the inferior_ptid for the first argument.
+	(i386_linux_insert_watchpoint): New prototype.
+	(i386_linux_remove_watchpoint, i386_linux_insert_hw_breakpoint): Ditto.
+	(i386_linux_remove_hw_breakpoint): Ditto.
+	(target_insert_watchpoint, target_remove_watchpoint): Undef and
+	override.
+	(target_insert_hw_breakpoint, target_remove_hw_breakpoint): Ditto.
+	* config/i386/nm-linux64.h: Ditto except add amd64 versions of
+	the watchpoint/hw-breakpoint insert/remove routines.
+	* i386-nat.c: Include "inferior.h" to define inferior_ptid.
+	* i386-linux-nat.c: Change all dr get/set routines to accept
+	ptid_t as first argument and to use this argument to determine
+	the tid for PTRACE.
+	(i386_linux_set_debug_regs_for_thread): New function.
+	(i386_linux_sync_debug_registers_callback): Ditto.
+	(i386_linux_sync_debug_registers_across_threads): Ditto.
+	(i386_linux_insert_watchpoint, i386_linux_remove_watchpoint): Ditto.
+	(i386_linux_hw_breakpoint, i386_linux_remove_hw_breakpoint): Ditto.
+	(i386_linux_new_thread): Ditto.
+	(_initialize_i386_linux_nat): Ditto.
+	* amd64-linux-nat.c: Change all dr get/set routines to accept
+	ptid_t as first argument and to use this argument to determine
+	the tid for PTRACE.
+	(amd64_linux_set_debug_regs_for_thread): New function.
+	(amd64_linux_sync_debug_registers_callback): Ditto.
+	(amd64_linux_sync_debug_registers_across_threads): Ditto.
+	(amd64_linux_insert_watchpoint, amd64_linux_remove_watchpoint): Ditto.
+	(amd64_linux_hw_breakpoint, amd64_linux_remove_hw_breakpoint): Ditto.
+	(amd64_linux_new_thread): Ditto.
+	(_initialize_amd64_linux_nat): Register linux new thread observer.
+	* testsuite/gdb.threads/watchthreads2.c: New test case.
+	* testsuite/gdb.threads/watchthreads2.exp: Ditto.
+
+--- gdb-6.3/gdb/config/i386/nm-linux64.h.fix	2004-08-15 12:10:23.000000000 -0400
++++ gdb-6.3/gdb/config/i386/nm-linux64.h	2005-02-28 17:36:09.000000000 -0500
+@@ -1,6 +1,6 @@
+ /* Native support for GNU/Linux x86-64.
+ 
+-   Copyright 2001, 2002, 2003, 2004 Free Software Foundation, Inc.
++   Copyright 2001, 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+ 
+    Contributed by Jiri Smid, SuSE Labs.
+ 
+@@ -35,22 +35,59 @@
+ 
+ /* Provide access to the i386 hardware debugging registers.  */
+ 
+-extern void amd64_linux_dr_set_control (unsigned long control);
++extern void amd64_linux_dr_set_control (ptid_t ptid, unsigned long control);
+ #define I386_DR_LOW_SET_CONTROL(control) \
+-  amd64_linux_dr_set_control (control)
++  amd64_linux_dr_set_control (inferior_ptid, control)
+ 
+-extern void amd64_linux_dr_set_addr (int regnum, CORE_ADDR addr);
++extern void amd64_linux_dr_set_addr (ptid_t ptid, int regnum, CORE_ADDR addr);
+ #define I386_DR_LOW_SET_ADDR(regnum, addr) \
+-  amd64_linux_dr_set_addr (regnum, addr)
++  amd64_linux_dr_set_addr (inferior_ptid, regnum, addr)
+ 
+-extern void amd64_linux_dr_reset_addr (int regnum);
++extern void amd64_linux_dr_reset_addr (ptid_t ptid, int regnum);
+ #define I386_DR_LOW_RESET_ADDR(regnum) \
+-  amd64_linux_dr_reset_addr (regnum)
++  amd64_linux_dr_reset_addr (inferior_ptid, regnum)
+ 
+-extern unsigned long amd64_linux_dr_get_status (void);
++extern unsigned long amd64_linux_dr_get_status (ptid_t ptid);
+ #define I386_DR_LOW_GET_STATUS() \
+-  amd64_linux_dr_get_status ()
++  amd64_linux_dr_get_status (inferior_ptid)
+ 
++/* Watchpoints and hardware breakpoints.  */
++
++/* Insert a watchpoint to watch a memory region which starts at
++ *  *    address ADDR and whose length is LEN bytes.  Watch memory accesses
++ *   *       of the type TYPE.  Return 0 on success, -1 on failure.  */
++extern int amd64_linux_insert_watchpoint (CORE_ADDR addr, int len, int type);
++
++/* Remove a watchpoint that watched the memory region which starts at
++ *  *    address ADDR, whose length is LEN bytes, and for accesses of the
++ *   *       type TYPE.  Return 0 on success, -1 on failure.  */
++extern int amd64_linux_remove_watchpoint (CORE_ADDR addr, int len, int type);
++
++/* Insert a hardware-assisted breakpoint at address ADDR.  SHADOW is
++ *  *    unused.  Return 0 on success, EBUSY on failure.  */
++extern int amd64_linux_insert_hw_breakpoint (CORE_ADDR addr, void *shadow);
++
++/* Remove a hardware-assisted breakpoint at address ADDR.  SHADOW is
++ *  *    unused. Return 0 on success, -1 on failure.  */
++extern int  amd64_linux_remove_hw_breakpoint (CORE_ADDR addr, void *shadow);
++
++/* Override basic amd64 macros for watchpoint and hardware breakpoint 
++ *    insertion/removal to support threads.  */
++#undef target_insert_watchpoint
++#define target_insert_watchpoint(addr, len, type) \
++  amd64_linux_insert_watchpoint (addr, len, type)
++
++#undef target_remove_watchpoint
++#define target_remove_watchpoint(addr, len, type) \
++  amd64_linux_remove_watchpoint (addr, len, type)
++
++#undef target_insert_hw_breakpoint
++#define target_insert_hw_breakpoint(addr, shadow) \
++  amd64_linux_insert_hw_breakpoint (addr, shadow)
++
++#undef target_remove_hw_breakpoint
++#define target_remove_hw_breakpoint(addr, shadow) \
++  amd64_linux_remove_hw_breakpoint (addr, shadow)
+ 
+ /* Override copies of {fetch,store}_inferior_registers in `infptrace.c'.  */
+ #define FETCH_INFERIOR_REGISTERS
+--- gdb-6.3/gdb/config/i386/nm-linux.h.fix	2004-09-20 12:39:35.000000000 -0400
++++ gdb-6.3/gdb/config/i386/nm-linux.h	2005-02-28 17:36:00.000000000 -0500
+@@ -1,7 +1,7 @@
+ /* Native support for GNU/Linux x86.
+ 
+    Copyright 1986, 1987, 1989, 1992, 1993, 1994, 1995, 1996, 1997,
+-   1998, 1999, 2000, 2001, 2002 Free Software Foundation, Inc.
++   1998, 1999, 2000, 2001, 2002, 2005 Free Software Foundation, Inc.
+ 
+    This file is part of GDB.
+ 
+@@ -45,23 +45,61 @@ extern CORE_ADDR register_u_addr (CORE_A
+ 
+ /* Provide access to the i386 hardware debugging registers.  */
+ 
+-extern void i386_linux_dr_set_control (unsigned long control);
++extern void i386_linux_dr_set_control (ptid_t ptid, unsigned long control);
+ #define I386_DR_LOW_SET_CONTROL(control) \
+-  i386_linux_dr_set_control (control)
++  i386_linux_dr_set_control (inferior_ptid, control)
+ 
+-extern void i386_linux_dr_set_addr (int regnum, CORE_ADDR addr);
++extern void i386_linux_dr_set_addr (ptid_t ptid, int regnum, CORE_ADDR addr);
+ #define I386_DR_LOW_SET_ADDR(regnum, addr) \
+-  i386_linux_dr_set_addr (regnum, addr)
++  i386_linux_dr_set_addr (inferior_ptid, regnum, addr)
+ 
+-extern void i386_linux_dr_reset_addr (int regnum);
++extern void i386_linux_dr_reset_addr (ptid_t ptid, int regnum);
+ #define I386_DR_LOW_RESET_ADDR(regnum) \
+-  i386_linux_dr_reset_addr (regnum)
++  i386_linux_dr_reset_addr (inferior_ptid, regnum)
+ 
+-extern unsigned long i386_linux_dr_get_status (void);
++extern unsigned long i386_linux_dr_get_status (ptid_t ptid);
+ #define I386_DR_LOW_GET_STATUS() \
+-  i386_linux_dr_get_status ()
++  i386_linux_dr_get_status (inferior_ptid)
+ 
+ 
++/* Watchpoints and hardware breakpoints.  */
++
++/* Insert a watchpoint to watch a memory region which starts at
++ *    address ADDR and whose length is LEN bytes.  Watch memory accesses
++ *       of the type TYPE.  Return 0 on success, -1 on failure.  */
++extern int i386_linux_insert_watchpoint (CORE_ADDR addr, int len, int type);
++
++/* Remove a watchpoint that watched the memory region which starts at
++ *    address ADDR, whose length is LEN bytes, and for accesses of the
++ *       type TYPE.  Return 0 on success, -1 on failure.  */
++extern int i386_linux_remove_watchpoint (CORE_ADDR addr, int len, int type);
++
++/* Insert a hardware-assisted breakpoint at address ADDR.  SHADOW is
++ *    unused.  Return 0 on success, EBUSY on failure.  */
++extern int i386_linux_insert_hw_breakpoint (CORE_ADDR addr, void *shadow);
++
++/* Remove a hardware-assisted breakpoint at address ADDR.  SHADOW is
++ *    unused. Return 0 on success, -1 on failure.  */
++extern int  i386_linux_remove_hw_breakpoint (CORE_ADDR addr, void *shadow);
++
++/* Override basic i386 macros for watchpoint and hardware breakpoint 
++   insertion/removal to support threads.  */
++#undef target_insert_watchpoint
++#define target_insert_watchpoint(addr, len, type) \
++  i386_linux_insert_watchpoint (addr, len, type)
++
++#undef target_remove_watchpoint
++#define target_remove_watchpoint(addr, len, type) \
++  i386_linux_remove_watchpoint (addr, len, type)
++
++#undef target_insert_hw_breakpoint
++#define target_insert_hw_breakpoint(addr, shadow) \
++  i386_linux_insert_hw_breakpoint (addr, shadow)
++
++#undef target_remove_hw_breakpoint
++#define target_remove_hw_breakpoint(addr, shadow) \
++  i386_linux_remove_hw_breakpoint (addr, shadow)
++
+ /* Override copies of {fetch,store}_inferior_registers in `infptrace.c'.  */
+ #define FETCH_INFERIOR_REGISTERS
+ 
+--- gdb-6.3/gdb/i386-nat.c.fix	2005-02-25 16:53:44.000000000 -0500
++++ gdb-6.3/gdb/i386-nat.c	2005-02-28 17:33:11.000000000 -0500
+@@ -1,6 +1,6 @@
+ /* Native-dependent code for the i386.
+ 
+-   Copyright 2001, 2004 Free Software Foundation, Inc.
++   Copyright 2001, 2004, 2005 Free Software Foundation, Inc.
+ 
+    This file is part of GDB.
+ 
+@@ -21,6 +21,7 @@
+ 
+ #include "defs.h"
+ #include "breakpoint.h"
++#include "inferior.h"
+ #include "command.h"
+ #include "gdbcmd.h"
+ 
+--- gdb-6.3/gdb/testsuite/gdb.threads/watchthreads2.c.fix	2005-02-28 17:33:54.000000000 -0500
++++ gdb-6.3/gdb/testsuite/gdb.threads/watchthreads2.c	2005-02-28 17:35:37.000000000 -0500
+@@ -0,0 +1,66 @@
++/* This testcase is part of GDB, the GNU debugger.
++
++   Copyright 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 2 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program; if not, write to the Free Software
++   Foundation, Inc., 59 Temple Place - Suite 330,
++   Boston, MA 02111-1307, USA.  
++ 
++   This file is copied from schedlock.c.  */
++
++#include <stdio.h>
++#include <unistd.h>
++#include <stdlib.h>
++#include <pthread.h>
++
++void *thread_function(void *arg); /* Pointer to function executed by each thread */
++
++#define NUM 5
++
++unsigned int args[NUM+1];
++
++int main() {
++    int res;
++    pthread_t threads[NUM];
++    void *thread_result;
++    long i;
++
++    for (i = 0; i < NUM; i++)
++      {
++	args[i] = 1; /* Init value.  */
++	res = pthread_create(&threads[i],
++		             NULL,
++			     thread_function,
++			     (void *) i);
++      }
++
++    args[i] = 1;
++    thread_function ((void *) i);
++
++    exit(EXIT_SUCCESS);
++}
++
++void *thread_function(void *arg) {
++    int my_number =  (long) arg;
++    int *myp = (int *) &args[my_number];
++
++    /* Don't run forever.  Run just short of it :)  */
++    while (*myp > 0)
++      {
++	(*myp) ++;  /* Loop increment.  */
++      }
++
++    pthread_exit(NULL);
++}
++
+--- gdb-6.3/gdb/testsuite/gdb.threads/watchthreads2.exp.fix	2005-02-28 17:33:57.000000000 -0500
++++ gdb-6.3/gdb/testsuite/gdb.threads/watchthreads2.exp	2005-02-28 17:35:33.000000000 -0500
+@@ -0,0 +1,133 @@
++# This testcase is part of GDB, the GNU debugger.
++
++# Copyright 2005 Free Software Foundation, Inc.
++
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 2 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  
++
++# Check that GDB can support multiple watchpoints across threads.
++
++if $tracelevel {
++    strace $tracelevel
++}
++
++set prms_id 0
++set bug_id 0
++
++# This test verifies that a watchpoint is detected in the proper thread
++# so the test is only meaningful on a system with hardware watchpoints.
++if [target_info exists gdb,no_hardware_watchpoints] {
++    return 0;
++}
++
++set testfile "watchthreads2"
++set srcfile ${testfile}.c
++set binfile ${objdir}/${subdir}/${testfile}
++if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable [list debug "incdir=${objdir}"]] != "" } {
++    return -1
++}
++
++gdb_exit
++gdb_start
++gdb_reinitialize_dir $srcdir/$subdir
++gdb_load ${binfile}
++
++gdb_test "set can-use-hw-watchpoints 1" "" ""
++
++#
++# Run to `main' where we begin our tests.
++#
++
++if ![runto_main] then {
++    gdb_suppress_tests
++}
++
++set args_2 0
++set args_3 0
++
++gdb_breakpoint "thread_function"
++gdb_continue_to_breakpoint "thread_function"
++gdb_test "disable 2" ""
++
++gdb_test_multiple "p args\[2\]" "get initial args2" {
++  -re "\\\$\[0-9\]* = (.*)$gdb_prompt $" {
++    set init_args_2 $expect_out(1,string)
++    pass "get initial args2"
++  }
++}
++
++gdb_test_multiple "p args\[3\]" "get initial args3" {
++  -re "\\\$\[0-9\]* = (.*)$gdb_prompt $" {
++    set init_args_3 $expect_out(1,string)
++    pass "get initial args3"
++  }
++}
++
++set args_2 $init_args_2
++set args_3 $init_args_3
++
++# Watch values that will be modified by distinct threads.
++gdb_test "watch args\[2\]" "Hardware watchpoint 3: args\\\[2\\\]"
++gdb_test "watch args\[3\]" "Hardware watchpoint 4: args\\\[3\\\]"
++
++set init_line [expr [gdb_get_line_number "Init value"]+1]
++set inc_line [gdb_get_line_number "Loop increment"]
++
++# Loop and continue to allow both watchpoints to be triggered.
++for {set i 0} {$i < 30} {incr i} {
++  set test_flag 0
++  gdb_test_multiple "continue" "threaded watch loop" {
++    -re "Hardware watchpoint 3: args\\\[2\\\].*Old value = 0.*New value = 1.*main \\\(\\\) at .*watchthreads2.c:$init_line.*$gdb_prompt $"
++       { set args_2 1; set test_flag 1 }
++    -re "Hardware watchpoint 4: args\\\[3\\\].*Old value = 0.*New value = 1.*main \\\(\\\) at .*watchthreads2.c:$init_line.*$gdb_prompt $"
++       { set args_3 1; set test_flag 1 }
++    -re "Hardware watchpoint 3: args\\\[2\\\].*Old value = $args_2.*New value = [expr $args_2+1].*in thread_function \\\(arg=0x2\\\) at .*watchthreads2.c:$inc_line.*$gdb_prompt $"
++       { set args_2 [expr $args_2+1]; set test_flag 1 }
++    -re "Hardware watchpoint 4: args\\\[3\\\].*Old value = $args_3.*New value = [expr $args_3+1].*in thread_function \\\(arg=0x3\\\) at .*watchthreads2.c:$inc_line.*$gdb_prompt $"
++       { set args_3 [expr $args_3+1]; set test_flag 1 }
++  }
++  # If we fail above, don't bother continuing loop
++  if { $test_flag == 0 } {
++    set i 30;
++  }
++}
++
++# Print success message if loop succeeded.
++if { $test_flag == 1 } {
++  pass "threaded watch loop"
++}
++
++# Verify that we hit first watchpoint in child thread.
++set message "watchpoint on args\[2\] hit in thread"
++if { $args_2 > 1 } {
++  pass $message 
++} else {
++  fail $message
++}
++
++# Verify that we hit second watchpoint in child thread.
++set message "watchpoint on args\[3\] hit in thread"
++if { $args_3 > 1 } {
++  pass $message 
++} else {
++  fail $message 
++}
++
++# Verify that all watchpoint hits are accounted for.
++set message "combination of threaded watchpoints = 30 + initial values"
++if { [expr $args_2+$args_3] == [expr [expr 30+$init_args_2]+$init_args_3] } {
++  pass $message 
++} else {
++  fail $message 
++}
+--- gdb-6.3/gdb/i386-linux-nat.c.fix	2005-02-24 19:36:12.000000000 -0500
++++ gdb-6.3/gdb/i386-linux-nat.c	2005-02-28 17:33:01.000000000 -0500
+@@ -1,6 +1,7 @@
+ /* Native-dependent code for GNU/Linux i386.
+ 
+-   Copyright 1999, 2000, 2001, 2002, 2003, 2004 Free Software Foundation, Inc.
++   Copyright 1999, 2000, 2001, 2002, 2003, 2004, 2005 
++   Free Software Foundation, Inc.
+ 
+    This file is part of GDB.
+ 
+@@ -23,6 +24,7 @@
+ #include "inferior.h"
+ #include "gdbcore.h"
+ #include "regcache.h"
++#include "observer.h"
+ #include "linux-nat.h"
+ 
+ #include "gdb_assert.h"
+@@ -612,14 +614,14 @@ store_inferior_registers (int regno)
+ /* Support for debug registers.  */
+ 
+ static unsigned long
+-i386_linux_dr_get (int regnum)
++i386_linux_dr_get (ptid_t ptid, int regnum)
+ {
+   int tid;
+   unsigned long value;
+ 
+-  tid = TIDGET (inferior_ptid);
++  tid = TIDGET (ptid);
+   if (tid == 0)
+-    tid = PIDGET (inferior_ptid);
++    tid = PIDGET (ptid);
+ 
+   /* FIXME: kettenis/2001-03-27: Calling perror_with_name if the
+      ptrace call fails breaks debugging remote targets.  The correct
+@@ -640,13 +642,13 @@ i386_linux_dr_get (int regnum)
+ }
+ 
+ static void
+-i386_linux_dr_set (int regnum, unsigned long value)
++i386_linux_dr_set (ptid_t ptid, int regnum, unsigned long value)
+ {
+   int tid;
+ 
+-  tid = TIDGET (inferior_ptid);
++  tid = TIDGET (ptid);
+   if (tid == 0)
+-    tid = PIDGET (inferior_ptid);
++    tid = PIDGET (ptid);
+ 
+   errno = 0;
+   ptrace (PTRACE_POKEUSER, tid,
+@@ -656,34 +658,158 @@ i386_linux_dr_set (int regnum, unsigned 
+ }
+ 
+ void
+-i386_linux_dr_set_control (unsigned long control)
++i386_linux_dr_set_control (ptid_t ptid, unsigned long control)
+ {
+-  i386_linux_dr_set (DR_CONTROL, control);
++  i386_linux_dr_set (ptid, DR_CONTROL, control);
+ }
+ 
+ void
+-i386_linux_dr_set_addr (int regnum, CORE_ADDR addr)
++i386_linux_dr_set_addr (ptid_t ptid, int regnum, CORE_ADDR addr)
+ {
+   gdb_assert (regnum >= 0 && regnum <= DR_LASTADDR - DR_FIRSTADDR);
+ 
+-  i386_linux_dr_set (DR_FIRSTADDR + regnum, addr);
++  i386_linux_dr_set (ptid, DR_FIRSTADDR + regnum, addr);
+ }
+ 
+ void
+-i386_linux_dr_reset_addr (int regnum)
++i386_linux_dr_reset_addr (ptid_t ptid, int regnum)
+ {
+   gdb_assert (regnum >= 0 && regnum <= DR_LASTADDR - DR_FIRSTADDR);
+ 
+-  i386_linux_dr_set (DR_FIRSTADDR + regnum, 0L);
++  i386_linux_dr_set (ptid, DR_FIRSTADDR + regnum, 0L);
+ }
+ 
+ unsigned long
+-i386_linux_dr_get_status (void)
++i386_linux_dr_get_status (ptid_t ptid)
+ {
+-  return i386_linux_dr_get (DR_STATUS);
++  return i386_linux_dr_get (ptid, DR_STATUS);
+ }
+ 
+ 
++/* Structure used to sync debug registers for all threads.  */
++struct i386_debug_register_state
++{
++  int tid;
++  CORE_ADDR addr[DR_LASTADDR - DR_FIRSTADDR + 1];
++  unsigned long control;
++};
++
++static void
++i386_linux_set_debug_regs_for_thread (ptid_t ptid,
++				      struct i386_debug_register_state *dbs)
++{
++  int i;
++  for (i = 0; i < (DR_LASTADDR - DR_FIRSTADDR) + 1; ++i)
++    i386_linux_dr_set_addr (ptid, i, dbs->addr[i]);
++  i386_linux_dr_set_control (ptid, dbs->control);
++}
++
++/* Iterator function to support syncing debug registers across all threads.  */
++static int
++i386_linux_sync_debug_registers_callback (struct lwp_info *lwp, void *data)
++{
++  struct i386_debug_register_state *args = data;
++  int i, tid;
++
++  tid = TIDGET (lwp->ptid);
++  if (tid == 0)
++    tid = PIDGET (lwp->ptid);
++
++  if (tid != args->tid)
++    i386_linux_set_debug_regs_for_thread (lwp->ptid, args);
++  return 0;
++}
++
++/* Sync the debug registers for all known threads to the current
++   thread that has just performed an operation.  This is required
++   because the debug registers are thread-specific.  We want
++   watchpoints and hardware breakpoints to be treated globally
++   across all threads.  */
++static int
++i386_linux_sync_debug_registers_across_threads (void)
++{
++  int i, tid;
++  struct i386_debug_register_state args;
++
++  tid = TIDGET (inferior_ptid);
++  if (tid == 0)
++    tid = PIDGET (inferior_ptid);
++
++  args.tid = tid;
++  for (i = 0; i < (DR_LASTADDR - DR_FIRSTADDR) + 1; ++i)
++    args.addr[i] = i386_linux_dr_get (inferior_ptid, DR_FIRSTADDR + i);
++  args.control = i386_linux_dr_get (inferior_ptid, DR_CONTROL);
++
++  iterate_over_lwps (&i386_linux_sync_debug_registers_callback, &args);
++
++  return 0;
++}
++
++/* Insert a watchpoint to watch a memory region which starts at
++   address ADDR and whose length is LEN bytes.  Watch memory accesses
++   of the type TYPE.  Return 0 on success, -1 on failure.  */
++int
++i386_linux_insert_watchpoint (CORE_ADDR addr, int len, int type)
++{
++  int rc;
++  rc = i386_insert_watchpoint (addr, len, type);
++  if (!rc)
++    i386_linux_sync_debug_registers_across_threads ();
++  return rc;
++}
++
++/* Remove a watchpoint that watched the memory region which starts at
++   address ADDR, whose length is LEN bytes, and for accesses of the
++   type TYPE.  Return 0 on success, -1 on failure.  */
++int
++i386_linux_remove_watchpoint (CORE_ADDR addr, int len, int type)
++{
++  int rc;
++  rc = i386_remove_watchpoint (addr, len, type);
++  if (!rc)
++    i386_linux_sync_debug_registers_across_threads ();
++  return rc;
++}
++
++/* Insert a hardware-assisted breakpoint at address ADDR.  SHADOW is
++   unused.  Return 0 on success, EBUSY on failure.  */
++int
++i386_linux_insert_hw_breakpoint (CORE_ADDR addr, void *shadow)
++{
++  int rc;
++  rc = i386_insert_hw_breakpoint (addr, shadow);
++  if (!rc)
++    i386_linux_sync_debug_registers_across_threads ();
++  return rc;
++}
++
++/* Remove a hardware-assisted breakpoint at address ADDR.  SHADOW is
++   unused.  Return 0 on success, -1 on failure.  */
++int
++i386_linux_remove_hw_breakpoint (CORE_ADDR addr, void *shadow)
++{
++  int rc;
++  rc = i386_remove_hw_breakpoint (addr, shadow);
++  if (!rc)
++    i386_linux_sync_debug_registers_across_threads ();
++  return rc;
++}
++
++/* Observer function for a new thread attach.  We need to insert
++   existing watchpoints and hardware breakpoints on the new thread.  */
++static void
++i386_linux_new_thread (ptid_t ptid)
++{
++  int i;
++  struct i386_debug_register_state dbs;
++
++  for (i = 0; i < (DR_LASTADDR - DR_FIRSTADDR) + 1; ++i)
++    dbs.addr[i] = i386_linux_dr_get (inferior_ptid, DR_FIRSTADDR + i);
++  dbs.control = i386_linux_dr_get (inferior_ptid, DR_CONTROL);
++
++  i386_linux_set_debug_regs_for_thread (ptid, &dbs);
++}
++
+ /* Called by libthread_db.  Returns a pointer to the thread local
+    storage (or its descriptor).  */
+ 
+@@ -817,3 +943,10 @@ child_post_startup_inferior (ptid_t ptid
+   i386_cleanup_dregs ();
+   linux_child_post_startup_inferior (ptid);
+ }
++
++void
++_initialize_i386_linux_nat (void)
++{
++  observer_attach_linux_new_thread (i386_linux_new_thread);
++}
++    
+--- gdb-6.3/gdb/amd64-linux-nat.c.fix	2005-02-24 19:37:56.000000000 -0500
++++ gdb-6.3/gdb/amd64-linux-nat.c	2005-02-28 17:32:44.000000000 -0500
+@@ -1,6 +1,6 @@
+ /* Native-dependent code for GNU/Linux x86-64.
+ 
+-   Copyright 2001, 2002, 2003, 2004 Free Software Foundation, Inc.
++   Copyright 2001, 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+    Contributed by Jiri Smid, SuSE Labs.
+ 
+    This file is part of GDB.
+@@ -24,6 +24,7 @@
+ #include "inferior.h"
+ #include "gdbcore.h"
+ #include "regcache.h"
++#include "observer.h"
+ #include "linux-nat.h"
+ 
+ #include "gdb_assert.h"
+@@ -228,14 +229,14 @@ store_inferior_registers (int regnum)
+ 
+ 
+ static unsigned long
+-amd64_linux_dr_get (int regnum)
++amd64_linux_dr_get (ptid_t ptid, int regnum)
+ {
+   int tid;
+   unsigned long value;
+ 
+-  tid = TIDGET (inferior_ptid);
++  tid = TIDGET (ptid);
+   if (tid == 0)
+-    tid = PIDGET (inferior_ptid);
++    tid = PIDGET (ptid);
+ 
+   /* FIXME: kettenis/2001-03-27: Calling perror_with_name if the
+      ptrace call fails breaks debugging remote targets.  The correct
+@@ -256,13 +257,13 @@ amd64_linux_dr_get (int regnum)
+ }
+ 
+ static void
+-amd64_linux_dr_set (int regnum, unsigned long value)
++amd64_linux_dr_set (ptid_t ptid, int regnum, unsigned long value)
+ {
+   int tid;
+ 
+-  tid = TIDGET (inferior_ptid);
++  tid = TIDGET (ptid);
+   if (tid == 0)
+-    tid = PIDGET (inferior_ptid);
++    tid = PIDGET (ptid);
+ 
+   errno = 0;
+   ptrace (PT_WRITE_U, tid, offsetof (struct user, u_debugreg[regnum]), value);
+@@ -271,34 +272,158 @@ amd64_linux_dr_set (int regnum, unsigned
+ }
+ 
+ void
+-amd64_linux_dr_set_control (unsigned long control)
++amd64_linux_dr_set_control (ptid_t ptid, unsigned long control)
+ {
+-  amd64_linux_dr_set (DR_CONTROL, control);
++  amd64_linux_dr_set (ptid, DR_CONTROL, control);
+ }
+ 
+ void
+-amd64_linux_dr_set_addr (int regnum, CORE_ADDR addr)
++amd64_linux_dr_set_addr (ptid_t ptid, int regnum, CORE_ADDR addr)
+ {
+   gdb_assert (regnum >= 0 && regnum <= DR_LASTADDR - DR_FIRSTADDR);
+ 
+-  amd64_linux_dr_set (DR_FIRSTADDR + regnum, addr);
++  amd64_linux_dr_set (ptid, DR_FIRSTADDR + regnum, addr);
+ }
+ 
+ void
+-amd64_linux_dr_reset_addr (int regnum)
++amd64_linux_dr_reset_addr (ptid_t ptid, int regnum)
+ {
+   gdb_assert (regnum >= 0 && regnum <= DR_LASTADDR - DR_FIRSTADDR);
+ 
+-  amd64_linux_dr_set (DR_FIRSTADDR + regnum, 0L);
++  amd64_linux_dr_set (ptid, DR_FIRSTADDR + regnum, 0L);
+ }
+ 
+ unsigned long
+-amd64_linux_dr_get_status (void)
++amd64_linux_dr_get_status (ptid_t ptid)
+ {
+-  return amd64_linux_dr_get (DR_STATUS);
++  return amd64_linux_dr_get (ptid, DR_STATUS);
+ }
+ 
+ 
++/* Structure used to sync debug registers for all threads.  */
++struct amd64_debug_register_state
++{
++  int tid;
++  CORE_ADDR addr[DR_LASTADDR - DR_FIRSTADDR + 1];
++  unsigned long control;
++};
++
++static void
++amd64_linux_set_debug_regs_for_thread (ptid_t ptid,
++				       struct amd64_debug_register_state *dbs)
++{
++  int i;
++  for (i = 0; i < (DR_LASTADDR - DR_FIRSTADDR) + 1; ++i)
++    amd64_linux_dr_set_addr (ptid, i, dbs->addr[i]);
++  amd64_linux_dr_set_control (ptid, dbs->control);
++}
++
++/* Iterator function to support syncing debug registers across all threads.  */
++static int
++amd64_linux_sync_debug_registers_callback (struct lwp_info *lwp, void *data)
++{
++  struct amd64_debug_register_state *args = data;
++  int i, tid;
++
++  tid = TIDGET (lwp->ptid);
++  if (tid == 0)
++    tid = PIDGET (lwp->ptid);
++
++  if (tid != args->tid)
++    amd64_linux_set_debug_regs_for_thread (lwp->ptid, args);
++  return 0;
++}
++
++/* Sync the debug registers for all known threads to the current
++   thread that has just performed an operation.  This is required
++   because the debug registers are thread-specific.  We want
++   watchpoints and hardware breakpoints to be treated globally
++   across all threads.  */
++static int
++amd64_linux_sync_debug_registers_across_threads (void)
++{
++  int i, tid;
++  struct amd64_debug_register_state args;
++
++  tid = TIDGET (inferior_ptid);
++  if (tid == 0)
++    tid = PIDGET (inferior_ptid);
++
++  args.tid = tid;
++  for (i = 0; i < (DR_LASTADDR - DR_FIRSTADDR) + 1; ++i)
++    args.addr[i] = amd64_linux_dr_get (inferior_ptid, DR_FIRSTADDR + i);
++  args.control = amd64_linux_dr_get (inferior_ptid, DR_CONTROL);
++
++  iterate_over_lwps (&amd64_linux_sync_debug_registers_callback, &args);
++
++  return 0;
++}
++
++/* Insert a watchpoint to watch a memory region which starts at
++   address ADDR and whose length is LEN bytes.  Watch memory accesses
++   of the type TYPE.  Return 0 on success, -1 on failure.  */
++int
++amd64_linux_insert_watchpoint (CORE_ADDR addr, int len, int type)
++{
++  int rc;
++  rc = i386_insert_watchpoint (addr, len, type);
++  if (!rc)
++    amd64_linux_sync_debug_registers_across_threads ();
++  return rc;
++}
++
++/* Remove a watchpoint that watched the memory region which starts at
++   address ADDR, whose length is LEN bytes, and for accesses of the
++   type TYPE.  Return 0 on success, -1 on failure.  */
++int
++amd64_linux_remove_watchpoint (CORE_ADDR addr, int len, int type)
++{
++  int rc;
++  rc = i386_remove_watchpoint (addr, len, type);
++  if (!rc)
++    amd64_linux_sync_debug_registers_across_threads ();
++  return rc;
++}
++
++/* Insert a hardware-assisted breakpoint at address ADDR.  SHADOW is
++   unused.  Return 0 on success, EBUSY on failure.  */
++int
++amd64_linux_insert_hw_breakpoint (CORE_ADDR addr, void *shadow)
++{
++  int rc;
++  rc = i386_insert_hw_breakpoint (addr, shadow);
++  if (!rc)
++    amd64_linux_sync_debug_registers_across_threads ();
++  return rc;
++}
++
++/* Remove a hardware-assisted breakpoint at address ADDR.  SHADOW is
++   unused.  Return 0 on success, -1 on failure.  */
++int
++amd64_linux_remove_hw_breakpoint (CORE_ADDR addr, void *shadow)
++{
++  int rc;
++  rc = i386_remove_hw_breakpoint (addr, shadow);
++  if (!rc)
++    amd64_linux_sync_debug_registers_across_threads ();
++  return rc;
++}
++
++/* Observer function for a new thread attach.  We need to insert
++   existing watchpoints and hardware breakpoints on the new thread.  */
++static void
++amd64_linux_new_thread (ptid_t ptid)
++{
++  int i;
++  struct amd64_debug_register_state dbs;
++
++  for (i = 0; i < (DR_LASTADDR - DR_FIRSTADDR) + 1; ++i)
++    dbs.addr[i] = amd64_linux_dr_get (inferior_ptid, DR_FIRSTADDR + i);
++  dbs.control = amd64_linux_dr_get (inferior_ptid, DR_CONTROL);
++
++  amd64_linux_set_debug_regs_for_thread (ptid, &dbs);
++}
++
+ /* This function is called by libthread_db as part of its handling of
+    a request for a thread's local storage address.  */
+ 
+@@ -380,4 +505,6 @@ _initialize_amd64_linux_nat (void)
+ 	      == amd64_native_gregset32_num_regs);
+   gdb_assert (ARRAY_SIZE (amd64_linux_gregset64_reg_offset)
+ 	      == amd64_native_gregset64_num_regs);
++
++  observer_attach_linux_new_thread (amd64_linux_new_thread);
+ }

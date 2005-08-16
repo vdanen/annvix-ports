@@ -1,0 +1,31 @@
+2004-09-27  Andrew Cagney  <cagney@gnu.org>
+
+	* frame.c (get_prev_frame): Stop backtrace when a zero PC and
+	successive normal frames.
+
+Index: ./gdb/frame.c
+===================================================================
+RCS file: /cvs/src/src/gdb/frame.c,v
+retrieving revision 1.191
+diff -p -u -r1.191 frame.c
+--- ./gdb/frame.c	1 Sep 2004 14:13:33 -0000	1.191
++++ ./gdb/frame.c	28 Sep 2004 02:45:58 -0000
+@@ -1235,6 +1235,18 @@ get_prev_frame (struct frame_info *this_
+       return NULL;
+     }
+ 
++  if (this_frame->level > 0
++#if 0
++      && backtrace_past_zero_pc
++#endif
++      && get_frame_type (this_frame) == NORMAL_FRAME
++      && get_frame_type (get_next_frame (this_frame)) == NORMAL_FRAME
++      && get_frame_pc (this_frame) == 0)
++    {
++      frame_debug_got_null_frame (gdb_stdlog, this_frame, "zero PC");
++      return NULL;
++    }
++
+   return get_prev_frame_1 (this_frame);
+ }
+ 

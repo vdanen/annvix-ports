@@ -1,0 +1,11 @@
+--- gdb-6.0/gdb/tracepoint.c.tracepoint	2003-06-12 01:29:48.000000000 +0200
++++ gdb-6.0/gdb/tracepoint.c	2004-01-07 17:06:01.000000000 +0100
+@@ -853,6 +853,8 @@ read_actions (struct tracepoint *t)
+       else
+ 	line = gdb_readline (0);
+ 
++      if (line == NULL || *line == EOF)
++	break;
+       linetype = validate_actionline (&line, t);
+       if (linetype == BADLINE)
+ 	continue;		/* already warned -- collect another line */

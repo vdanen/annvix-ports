@@ -1,0 +1,368 @@
+2004-12-13  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* ia64-tdep.c (KERNEL_START): New macro.
+	(ia64_frame_this_id): Add support to return null_frame_id.
+	(ia64_access_mem): Update logic.
+	(get_kernel_table): Ditto.
+	(ia64_libunwind_frame_this_id): Add code to detect end of
+	stack and return null_frame_id.
+	(ia64_libunwind_sigtramp_frame_sniffer): New function.
+	(ia64_gdbarch_init): Set up special libunwind sigtramp
+	frame sniffer when libunwind is available.
+	* libunwind-frame.c (libunwind_frame_cache): Return NULL
+	if an error occurs.  Fix all callers to return null_frame_id
+	if NULL is returned by this function.
+	(libunwind_frame_sniffer): Use is_signal_frame call to 
+	determine if the frame is valid.
+	(libunwind_sigtramp_frame_sniffer): New function.
+	(libunwind_load): Load is_signal_frame function pointer.
+	* libunwind-frame.h (libunwind_sigtramp_frame_sniffer): New
+	prototype.
+	* thread.c (restore_current_thread): Remove printing of
+	current position.
+	
+--- gdb-6.3/gdb/ia64-tdep.c.fix	Mon Dec 13 19:01:18 2004
++++ gdb-6.3/gdb/ia64-tdep.c	Mon Dec 13 19:03:29 2004
+@@ -44,6 +44,34 @@
+ #include "elf/ia64.h"           /* for PT_IA_64_UNWIND value */
+ #include "libunwind-frame.h"
+ #include "libunwind-ia64.h"
++
++/* Note: KERNEL_START is supposed to be an address which is not going
++         to ever contain any valid unwind info.  For ia64 linux, the choice
++         of 0xc000000000000000 is fairly safe since that's uncached space.
++ 
++         We use KERNEL_START as follows: after obtaining the kernel's
++         unwind table via getunwind(), we project its unwind data into
++         address-range KERNEL_START-(KERNEL_START+ktab_size) and then
++         when ia64_access_mem() sees a memory access to this
++         address-range, we redirect it to ktab instead.
++
++         None of this hackery is needed with a modern kernel/libcs
++         which uses the kernel virtual DSO to provide access to the
++         kernel's unwind info.  In that case, ktab_size remains 0 and
++         hence the value of KERNEL_START doesn't matter.  */
++
++#define KERNEL_START 0xc000000000000000ULL
++
++static size_t ktab_size = 0;
++struct ia64_table_entry
++  {
++    uint64_t start_offset;
++    uint64_t end_offset;
++    uint64_t info_offset;
++  };
++
++static struct ia64_table_entry *ktab = NULL;
++
+ #endif
+ 
+ /* Hook for determining the global pointer when calling functions in
+@@ -1543,11 +1571,11 @@ ia64_frame_this_id (struct frame_info *n
+   struct ia64_frame_cache *cache =
+     ia64_frame_cache (next_frame, this_cache);
+ 
+-  /* This marks the outermost frame.  */
++  /* If outermost frame, mark with null frame id.  */
+   if (cache->base == 0)
+-    return;
+-
+-  (*this_id) = frame_id_build_special (cache->base, cache->pc, cache->bsp);
++    (*this_id) = null_frame_id;
++  else
++    (*this_id) = frame_id_build_special (cache->base, cache->pc, cache->bsp);
+   if (gdbarch_debug >= 1)
+     fprintf_unfiltered (gdb_stdlog,
+ 			"regular frame id: code 0x%s, stack 0x%s, special 0x%s, next_frame %p\n",
+@@ -2305,6 +2333,18 @@ ia64_access_mem (unw_addr_space_t as,
+ 		 unw_word_t addr, unw_word_t *val,
+ 		 int write, void *arg)
+ {
++  if (addr - KERNEL_START < ktab_size)
++    {
++      unw_word_t *laddr = (unw_word_t*) ((char *) ktab
++                          + (addr - KERNEL_START));
++		
++      if (write)
++        *laddr = *val; 
++      else 
++        *val = *laddr;
++      return 0;
++    }
++
+   /* XXX do we need to normalize byte-order here?  */
+   if (write)
+     return target_write_memory (addr, (char *) val, sizeof (unw_word_t));
+@@ -2327,27 +2367,18 @@ getunwind_table (void *buf, size_t len)
+ static int
+ get_kernel_table (unw_word_t ip, unw_dyn_info_t *di)
+ {
+-  size_t size;
+-  struct ia64_table_entry
+-  {
+-    uint64_t start_offset;
+-    uint64_t end_offset;
+-    uint64_t info_offset;
+-  };
+-  static struct ia64_table_entry *ktab = NULL, *etab;
++  static struct ia64_table_entry *etab;
+ 
+-  if (!ktab)
++  if (!ktab) 
+     {
+-      size = getunwind_table (NULL, 0);
+-      if ((int)size < 0)
+-	return -UNW_ENOINFO;
+-      ktab = xmalloc (size);
+-      getunwind_table (ktab, size);
+-  
+-      /* Determine length of kernel's unwind table and relocate
+-	 it's entries.  */
++      ktab_size = getunwind_table (NULL, 0);
++      if ((int)ktab_size < 0)
++        return -UNW_ENOINFO;
++      ktab = xmalloc (ktab_size);
++      getunwind_table (ktab, ktab_size);
++		          
+       for (etab = ktab; etab->start_offset; ++etab)
+-	etab->info_offset += (uint64_t) ktab;
++        etab->info_offset += KERNEL_START;
+     }
+   
+   if (ip < ktab[0].start_offset || ip >= etab[-1].end_offset)
+@@ -2549,14 +2580,33 @@ ia64_libunwind_frame_this_id (struct fra
+   char buf[8];
+   CORE_ADDR bsp;
+   struct frame_id id;
++  CORE_ADDR prev_ip, addr;
++  int realnum, optimized;
++  enum lval_type lval;
++
+ 
+   libunwind_frame_this_id (next_frame, this_cache, &id);
++  if (frame_id_eq (id, null_frame_id))
++    {
++      (*this_id) = null_frame_id;
++      return;
++    }
+ 
+-  /* We must add the bsp as the special address for frame comparison purposes.  */
++  /* We must add the bsp as the special address for frame comparison 
++     purposes.  */
+   frame_unwind_register (next_frame, IA64_BSP_REGNUM, buf);
+   bsp = extract_unsigned_integer (buf, 8);
+ 
+-  (*this_id) = frame_id_build_special (id.stack_addr, id.code_addr, bsp);
++  /* If the previous frame pc value is 0, then we are at the end of the stack
++     and don't want to unwind past this frame.  We return a null frame_id to
++     indicate this.  */
++  libunwind_frame_prev_register (next_frame, this_cache, IA64_IP_REGNUM, 
++		  		 &optimized, &lval, &addr, &realnum, &prev_ip);
++
++  if (prev_ip != 0)
++    (*this_id) = frame_id_build_special (id.stack_addr, id.code_addr, bsp);
++  else
++    (*this_id) = null_frame_id;
+ 
+   if (gdbarch_debug >= 1)
+     fprintf_unfiltered (gdb_stdlog,
+@@ -2667,6 +2717,19 @@ ia64_libunwind_frame_sniffer (struct fra
+   return NULL;
+ }
+ 
++static const struct frame_unwind *
++ia64_libunwind_sigtramp_frame_sniffer (struct frame_info *next_frame)
++{
++  if (libunwind_is_initialized ())
++    {
++      if (libunwind_sigtramp_frame_sniffer (next_frame))
++        return &ia64_sigtramp_frame_unwind;
++      return NULL;
++    }
++  else
++    return ia64_sigtramp_frame_sniffer (next_frame);
++}
++
+ /* Set of libunwind callback acccessor functions.  */
+ static unw_accessors_t ia64_unw_accessors =
+ {
+@@ -3354,10 +3417,12 @@ ia64_gdbarch_init (struct gdbarch_info i
+   set_gdbarch_unwind_dummy_id (gdbarch, ia64_unwind_dummy_id);
+ 
+   set_gdbarch_unwind_pc (gdbarch, ia64_unwind_pc);
+-  frame_unwind_append_sniffer (gdbarch, ia64_sigtramp_frame_sniffer);
+ #ifdef HAVE_LIBUNWIND_IA64_H
++  frame_unwind_append_sniffer (gdbarch, ia64_libunwind_sigtramp_frame_sniffer);
+   frame_unwind_append_sniffer (gdbarch, ia64_libunwind_frame_sniffer);
+   libunwind_frame_set_descr (gdbarch, &ia64_libunwind_descr);
++#else
++  frame_unwind_append_sniffer (gdbarch, ia64_sigtramp_frame_sniffer);
+ #endif
+   frame_unwind_append_sniffer (gdbarch, ia64_frame_sniffer);
+   frame_base_set_default (gdbarch, &ia64_frame_base);
+--- gdb-6.3/gdb/libunwind-frame.c.fix	Mon Dec 13 19:01:27 2004
++++ gdb-6.3/gdb/libunwind-frame.c	Mon Dec 13 19:03:29 2004
+@@ -49,6 +49,7 @@ static struct gdbarch_data *libunwind_de
+ static int (*unw_get_reg_p) (unw_cursor_t *, unw_regnum_t, unw_word_t *);
+ static int (*unw_get_fpreg_p) (unw_cursor_t *, unw_regnum_t, unw_fpreg_t *);
+ static int (*unw_get_saveloc_p) (unw_cursor_t *, unw_regnum_t, unw_save_loc_t *);
++static int (*unw_is_signal_frame_p) (unw_cursor_t *);
+ static int (*unw_step_p) (unw_cursor_t *);
+ static int (*unw_init_remote_p) (unw_cursor_t *, unw_addr_space_t, void *);
+ static unw_addr_space_t (*unw_create_addr_space_p) (unw_accessors_t *, int);
+@@ -78,6 +79,7 @@ struct libunwind_frame_cache
+ static char *get_reg_name = STRINGIFY(UNW_OBJ(get_reg));
+ static char *get_fpreg_name = STRINGIFY(UNW_OBJ(get_fpreg));
+ static char *get_saveloc_name = STRINGIFY(UNW_OBJ(get_save_loc));
++static char *is_signal_frame_name = STRINGIFY(UNW_OBJ(is_signal_frame));
+ static char *step_name = STRINGIFY(UNW_OBJ(step));
+ static char *init_remote_name = STRINGIFY(UNW_OBJ(init_remote));
+ static char *create_addr_space_name = STRINGIFY(UNW_OBJ(create_addr_space));
+@@ -139,6 +141,10 @@ libunwind_frame_cache (struct frame_info
+   cache = FRAME_OBSTACK_ZALLOC (struct libunwind_frame_cache);
+ 
+   cache->func_addr = frame_func_unwind (next_frame);
++  if (cache->func_addr == 0
++      && frame_relative_level (next_frame) > 0
++      && get_frame_type (next_frame) != SIGTRAMP_FRAME)
++    return NULL;
+ 
+   /* Get a libunwind cursor to the previous frame.  We do this by initializing
+      a cursor.  Libunwind treats a new cursor as the top of stack and will get
+@@ -156,7 +162,8 @@ libunwind_frame_cache (struct frame_info
+ 				 : __LITTLE_ENDIAN);
+ 
+   unw_init_remote_p (&cache->cursor, as, next_frame);
+-  unw_step_p (&cache->cursor);
++  if (unw_step_p (&cache->cursor) < 0)
++    return NULL;
+ 
+   /* To get base address, get sp from previous frame.  */
+   uw_sp_regnum = descr->gdb2uw (SP_REGNUM);
+@@ -208,8 +215,14 @@ libunwind_frame_sniffer (struct frame_in
+ 
+   ret = unw_init_remote_p (&cursor, as, next_frame);
+ 
+-  if (ret >= 0)
+-    ret = unw_step_p (&cursor);
++  if (ret < 0)
++    return NULL;
++
++ 
++  /* Check to see if we have libunwind info by checking if we are in a 
++     signal frame.  If it doesn't return an error, we have libunwind info
++     and can use libunwind.  */
++  ret = unw_is_signal_frame_p (&cursor);
+ 
+   if (ret < 0)
+     return NULL;
+@@ -224,7 +237,10 @@ libunwind_frame_this_id (struct frame_in
+   struct libunwind_frame_cache *cache =
+     libunwind_frame_cache (next_frame, this_cache);
+ 
+-  (*this_id) = frame_id_build (cache->base, cache->func_addr);
++  if (cache != NULL)
++    (*this_id) = frame_id_build (cache->base, cache->func_addr);
++  else
++    (*this_id) = null_frame_id;
+ }
+ 
+ void
+@@ -245,6 +261,9 @@ libunwind_frame_prev_register (struct fr
+   unw_regnum_t uw_regnum;
+   struct libunwind_descr *descr;
+ 
++  if (cache == NULL)
++    return;
++  
+   /* Convert from gdb register number to libunwind register number.  */
+   descr = libunwind_descr (get_frame_arch (next_frame));
+   uw_regnum = descr->gdb2uw (regnum);
+@@ -312,6 +331,8 @@ libunwind_frame_base_address (struct fra
+   struct libunwind_frame_cache *cache =
+     libunwind_frame_cache (next_frame, this_cache);
+ 
++  if (cache == NULL)
++    return (CORE_ADDR)NULL;
+   return cache->base;
+ }
+ 
+@@ -325,6 +346,43 @@ libunwind_search_unwind_table (void *as,
+ 				    di, pi, need_unwind_info, args);
+ }
+ 
++/* Verify if we are in a sigtramp frame and we can use libunwind to unwind.  */
++const struct frame_unwind *
++libunwind_sigtramp_frame_sniffer (struct frame_info *next_frame)
++{
++  unw_cursor_t cursor;
++  unw_accessors_t *acc;
++  unw_addr_space_t as;
++  struct libunwind_descr *descr;
++  int i, ret;
++
++  /* To test for libunwind unwind support, initialize a cursor to the
++     current frame and try to back up.  We use this same method when
++     setting up the frame cache (see libunwind_frame_cache()).  If
++     libunwind returns success for this operation, it means that it
++     has found sufficient libunwind unwinding information to do
++     so.  */
++
++  descr = libunwind_descr (get_frame_arch (next_frame));
++  acc = descr->accessors;
++  as =  unw_create_addr_space_p (acc,
++				 TARGET_BYTE_ORDER == BFD_ENDIAN_BIG
++				 ? __BIG_ENDIAN
++				 : __LITTLE_ENDIAN);
++
++  ret = unw_init_remote_p (&cursor, as, next_frame);
++
++  if (ret < 0)
++    return NULL;
++
++  /* Check to see if we are in a signal frame.  */
++  ret = unw_is_signal_frame_p (&cursor);
++  if (ret > 0)
++    return &libunwind_frame_unwind;
++
++  return NULL;
++}
++
+ static int
+ libunwind_load (void)
+ {
+@@ -348,6 +406,10 @@ libunwind_load (void)
+   if (unw_get_saveloc_p == NULL)
+     return 0;
+ 
++  unw_is_signal_frame_p = dlsym (handle, is_signal_frame_name);
++  if (unw_is_signal_frame_p == NULL)
++    return 0;
++
+   unw_step_p = dlsym (handle, step_name);
+   if (unw_step_p == NULL)
+     return 0;
+--- gdb-6.3/gdb/thread.c.fix	Mon Dec 13 19:01:36 2004
++++ gdb-6.3/gdb/thread.c	Mon Dec 13 19:04:46 2004
+@@ -471,10 +471,7 @@ static void
+ restore_current_thread (ptid_t ptid)
+ {
+   if (!ptid_equal (ptid, inferior_ptid))
+-    {
+-      switch_to_thread (ptid);
+-      print_stack_frame (get_current_frame (), 1, SRC_LINE);
+-    }
++    switch_to_thread (ptid);
+ }
+ 
+ struct current_thread_cleanup
+--- gdb-6.3/gdb/libunwind-frame.h.fix	Mon Dec 13 19:02:22 2004
++++ gdb-6.3/gdb/libunwind-frame.h	Mon Dec 13 19:03:29 2004
+@@ -40,6 +40,7 @@ struct libunwind_descr
+ };
+ 
+ const struct frame_unwind *libunwind_frame_sniffer (struct frame_info *next_frame);
++const struct frame_unwind *libunwind_sigtramp_frame_sniffer (struct frame_info *next_frame);
+ 
+ void libunwind_frame_set_descr (struct gdbarch *arch, struct libunwind_descr *descr);
+ 

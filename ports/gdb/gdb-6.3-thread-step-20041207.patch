@@ -1,0 +1,58 @@
+2004-12-07  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* linux-nat.c (find_singlestep_lwp_callback): New function.
+	(linux-nat-wait): Before waiting on any pid, check if there
+	is a stepping lwp and if so, wait on it specifically.
+
+--- gdb-6.3/gdb/linux-nat.c.fix	Tue Dec  7 19:39:34 2004
++++ gdb-6.3/gdb/linux-nat.c	Tue Dec  7 19:39:46 2004
+@@ -1489,9 +1489,21 @@ count_events_callback (struct lwp_info *
+   return 0;
+ }
+ 
+-/* Select the LWP (if any) that is currently being single-stepped.  */
++/* Find an LWP (if any) that is currently being single-stepped.  */
+ 
+ static int
++find_singlestep_lwp_callback (struct lwp_info *lp, void *data)
++{
++  if (lp->step)
++    return 1;
++  else
++    return 0;
++}
++
++/* Select the LWP with an event (if any) that is currently being 
++   single-stepped.  */
++		 
++static int
+ select_singlestep_lwp_callback (struct lwp_info *lp, void *data)
+ {
+   if (lp->step && lp->status != 0)
+@@ -1774,7 +1786,25 @@ retry:
+      least if there are any LWPs at all.  */
+   gdb_assert (num_lwps == 0 || iterate_over_lwps (resumed_callback, NULL));
+ 
+-  /* First check if there is a LWP with a wait status pending.  */
++  /* Check if there is any LWP that is being single-stepped.  We need to
++     wait specifically on such an LWP because the higher-level code is
++     expecting a step operation to find an event on the stepped LWP.
++     It is possible for other events to occur before the step operation
++     gets the expected trap so we don't want to wait on any LWP.
++     This has ramifications when adjustment of the PC is required which can be
++     different after a breakpoint vs a step (e.g. x86).  */
++  lp = iterate_over_lwps (find_singlestep_lwp_callback, NULL);
++  if (lp) {
++    if (debug_linux_nat)
++      fprintf_unfiltered (gdb_stdlog,
++                         "LLW: Found step lwp %s.\n",
++                         target_pid_to_str (lp->ptid));
++    ptid = lp->ptid;
++    pid = PIDGET (ptid);
++  }
++
++  /* If any pid, check if there is a LWP with a wait status pending.  */
++
+   if (pid == -1)
+     {
+       /* Any LWP that's been resumed will do.  */

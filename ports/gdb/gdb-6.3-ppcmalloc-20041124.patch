@@ -1,0 +1,19 @@
+committed to mainline 2005-02-08
+
+2004-11-24  Andrew Cagney  <cagney@gnu.org>
+
+	* ppc-linux-tdep.c (ppc_linux_init_abi): Do not set malloc name,
+	no longer needed.
+
+--- ./gdb/ppc-linux-tdep.c.1	2004-11-24 15:51:57.300667824 -0500
++++ ./gdb/ppc-linux-tdep.c	2004-11-24 15:52:17.504596360 -0500
+@@ -1173,9 +1173,6 @@
+         (gdbarch, ppc64_in_solib_call_trampoline);
+       set_gdbarch_skip_trampoline_code (gdbarch, ppc64_skip_trampoline_code);
+ 
+-      /* PPC64 malloc's entry-point is called ".malloc".  */
+-      set_gdbarch_name_of_malloc (gdbarch, ".malloc");
+-
+       /* Trampolines.  */
+       tramp_frame_prepend_unwinder (gdbarch, &ppc64_linux_sigaction_tramp_frame);
+       tramp_frame_prepend_unwinder (gdbarch, &ppc64_linux_sighandler_tramp_frame);

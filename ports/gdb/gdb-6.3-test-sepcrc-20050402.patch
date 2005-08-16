@@ -1,0 +1,53 @@
+Index: ./gdb/testsuite/ChangeLog
+2005-04-02  Andrew Cagney  <cagney@gnu.org>
+
+	* gdb.base/sepdebug.exp: Check that things fail when the debug
+	info is corrupt.
+	* gdb.base/sepdebug2.c (main): New file.
+
+--- ../gdb-6.3/./gdb/testsuite/gdb.base/sepdebug.exp	2004-01-14 10:09:37.000000000 -0500
++++ ./gdb/testsuite/gdb.base/sepdebug.exp	2005-04-02 15:57:17.000000000 -0500
+@@ -985,3 +985,35 @@
+     send_gdb "set args main\n"
+     gdb_expect -re ".*$gdb_prompt $" {}
+ }
++
++
++# Compile up a second, different, object file.  Copy its debug info
++# over the top of the new debug info.  Note that somewhere in the
++# above the "set debug-file-directory" variable is set to
++# ${objdir}/${subdir} so need to move things there.
++
++set existing_binfile $binfile
++set testfile "sepdebug2"
++set srcfile ${testfile}.c
++set binfile ${objdir}/${subdir}/${testfile}
++set corrupt_debug_file [separate_debug_filename $binfile]
++if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug additional_flags=-w}] != "" } {
++    return -1
++}
++if [gdb_gnu_strip_debug $binfile] {
++    # check that you have a recent version of strip and objcopy installed
++    unsupported "cannot produce separate debug info files"
++    return -1
++}
++remote_exec build "cp $corrupt_debug_file ${existing_binfile}.debug"
++
++set test  "A corrupt debug file gets a warning"
++gdb_test_multiple "file $existing_binfile" "$test" {
++    -re "warning:.*mismatch.*" {
++	pass "$test"
++    }
++    -re ".y or n. " {
++	send_gdb "y\n"
++	exp_continue
++    }
++}
+--- /dev/null	2005-04-02 11:30:32.604931736 -0500
++++ ./gdb/testsuite/gdb.base/sepdebug2.c	2005-04-02 13:09:31.000000000 -0500
+@@ -0,0 +1,5 @@
++int
++main (int argc, char *argv[], char *envp[])
++{
++  return 0;
++}

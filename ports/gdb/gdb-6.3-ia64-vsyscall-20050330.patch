@@ -1,0 +1,70 @@
+2005-03-30  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* gdb/ia64-tdep.c (ia64_find_unwind_table): Change code to
+	allow for idiosyncrasies of ia64 vsyscall page.
+	* bfd/elfcode.h: Ditto.
+
+--- gdb-6.3/gdb/ia64-tdep.c.fix	2005-03-30 13:34:00.000000000 -0500
++++ gdb-6.3/gdb/ia64-tdep.c	2005-03-30 13:36:45.000000000 -0500
+@@ -2449,16 +2449,35 @@ ia64_find_unwind_table (struct objfile *
+ 	}
+     }
+ 
+-  if (!p_text || !p_unwind
+-      /* Verify that the segment that contains the IP also contains
+-	 the static unwind table.  If not, we are dealing with
+-	 runtime-generated code, for which we have no info here.  */
+-      || (p_unwind->p_vaddr - p_text->p_vaddr) >= p_text->p_memsz)
++  if (!p_text || !p_unwind)
+     return -UNW_ENOINFO;
+ 
++  /* Verify that the segment that contains the IP also contains
++     the static unwind table.  If not, we may be in the Linux kernel's
++     DSO gate page in which case the unwind table is another segment. 
++     Otherwise, we are dealing with runtime-generated code, for which we 
++     have no info here.  */
+   segbase = p_text->p_vaddr + load_base;
+ 
+-  dip->start_ip = segbase;
++  if ((p_unwind->p_vaddr - p_text->p_vaddr) >= p_text->p_memsz)
++    {
++      int ok = 0;
++      for (i = 0; i < ehdr->e_phnum; ++i)
++        {
++          if (phdr[i].p_type == PT_LOAD
++	      && (p_unwind->p_vaddr - phdr[i].p_vaddr) < phdr[i].p_memsz)
++	    {
++              ok = 1;
++	      /* Get the segbase from the section containing the
++		 libunwind table.  */
++	      segbase = phdr[i].p_vaddr + load_base;
++	    }
++	}
++      if (!ok)
++        return -UNW_ENOINFO;
++    }
++
++  dip->start_ip = p_text->p_vaddr + load_base;
+   dip->end_ip = dip->start_ip + p_text->p_memsz;
+   dip->gp = FIND_GLOBAL_POINTER (ip);
+   dip->format = UNW_INFO_FORMAT_REMOTE_TABLE;
+--- gdb-6.3/bfd/elfcode.h.fix	2005-03-30 13:34:53.000000000 -0500
++++ gdb-6.3/bfd/elfcode.h	2005-03-30 13:37:48.000000000 -0500
+@@ -1,6 +1,6 @@
+ /* ELF executable support for BFD.
+    Copyright 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000,
+-   2001, 2002, 2003, 2004 Free Software Foundation, Inc.
++   2001, 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+ 
+    Written by Fred Fish @ Cygnus Support, from information published
+    in "UNIX System V Release 4, Programmers Guide: ANSI C and
+@@ -1619,7 +1619,8 @@ NAME(_bfd_elf,bfd_from_remote_memory)
+ 	  if (segment_end > (bfd_vma) contents_size)
+ 	    contents_size = segment_end;
+ 
+-	  if ((i_phdrs[i].p_offset & -i_phdrs[i].p_align) == 0)
++	  if ((i_phdrs[i].p_offset & -i_phdrs[i].p_align) == 0
++	      && loadbase == ehdr_vma)
+ 	    loadbase = ehdr_vma - (i_phdrs[i].p_vaddr & -i_phdrs[i].p_align);
+ 
+ 	  last_phdr = &i_phdrs[i];

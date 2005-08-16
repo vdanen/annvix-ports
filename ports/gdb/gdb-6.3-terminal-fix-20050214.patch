@@ -1,0 +1,31 @@
+2005-02-14  Jeff Johnston <jjohnstn@redhat.com>
+
+	* top.c (gdb_readline_wrapper): Ensure terminal is gdb's before calling
+	readline.
+
+--- gdb-6.3/gdb/top.c.fix	2005-02-14 16:28:56.000000000 -0500
++++ gdb-6.3/gdb/top.c	2005-02-14 16:30:20.000000000 -0500
+@@ -1,7 +1,7 @@
+ /* Top level stuff for GDB, the GNU debugger.
+ 
+    Copyright 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994,
+-   1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004
++   1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005
+    Free Software Foundation, Inc.
+ 
+    This file is part of GDB.
+@@ -982,6 +982,14 @@ gdb_readline_wrapper (char *prompt)
+       after_char_processing_hook = NULL;
+     }
+ 
++  /* Before calling readline, ensure we have the terminal.  If we don't
++     have the terminal and call readline, we risk the possibility of
++     gdb being thrown into the background.  This problem occurs when
++     we attach to a background process on the same terminal the background
++     process was started from and then perform some action which requires
++     a page break prompt.  */
++  terminal_ours ();
++
+   return readline (prompt);
+ }
+ 

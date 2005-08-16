@@ -1,0 +1,30 @@
+2005-02-07  Jeff Johnston  <jjohnstn@redhat.com>
+
+        * linux-nat.c (linux_nat_xfer_memory): Don't use
+        linux_proc_xfer_memory for ia64.
+
+--- gdb-6.3/gdb/linux-nat.c.fix	Fri Feb  4 22:52:40 2005
++++ gdb-6.3/gdb/linux-nat.c	Tue Feb  8 15:49:09 2005
+@@ -2381,12 +2381,22 @@ linux_nat_xfer_memory (CORE_ADDR memaddr
+   struct cleanup *old_chain = save_inferior_ptid ();
+   int xfer;
+ 
++#ifdef NATIVE_XFER_UNWIND_TABLE
++  /* FIXME: For ia64, we cannot currently use linux_proc_xfer_memory
++            for accessing thread storage.  Revert when Bugzilla 147436
++	    is fixed.  */
++  if (is_lwp (inferior_ptid))
++    inferior_ptid = pid_to_ptid (GET_LWP (inferior_ptid));
++
++  xfer = child_xfer_memory (memaddr, myaddr, len, write, attrib, target);
++#else
+   if (is_lwp (inferior_ptid))
+     inferior_ptid = pid_to_ptid (GET_LWP (inferior_ptid));
+ 
+   xfer = linux_proc_xfer_memory (memaddr, myaddr, len, write, attrib, target);
+   if (xfer == 0)
+     xfer = child_xfer_memory (memaddr, myaddr, len, write, attrib, target);
++#endif
+ 
+   do_cleanups (old_chain);
+   return xfer;

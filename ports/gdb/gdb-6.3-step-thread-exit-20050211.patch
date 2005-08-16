@@ -1,0 +1,402 @@
+2005-02-11  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* target.h (target_waitstatus): Add new step_thread_exit flag.
+	* infrun.c (init_execution_control_state): Initialize step_thread_exit.
+	(handle_inferior_event): If step_thread_exit flag is set, print
+	out special message and reset flag.
+	(currently_stepping): Do not return true if step_thread_exit flag
+	is set.
+	* linux-nat.c (resume_callback): Use second parameter to notify
+	if the resume should be a PTRACE_SINGLESTEP or PTRACE_CONT.
+	(stop_and_resume_callback): Pass on data parameter to resume_callback.
+	(linux_nat_resume): Don't attempt to resume if lp is NULL.
+	(linux_nat_wait): Do not wait on step_lp as first wait.  After
+	wait, check if step_lp has an event or not.  If the step lwp has
+	exited, issue a stop on the first non-step_lp lwp in the lwp list.
+	Change the delayed stop code to not ignore an intentional stop.
+	If we see an event on an lwp which isn't the step_lp, verify if
+	the step_lp has exited or not.  Set the step_thread_exit flag if
+	we have verified that the step_lp is gone.
+	* testsuite/gdb.threads/step-thread-exit.c: New testcase.
+	* testsuite/gdb.threads/step-thread-exit.exp: Ditto.
+	
+--- gdb-6.3/gdb/testsuite/gdb.threads/step-thread-exit.c.fix	2005-02-11 16:51:43.000000000 -0500
++++ gdb-6.3/gdb/testsuite/gdb.threads/step-thread-exit.c	2005-02-11 18:27:55.000000000 -0500
+@@ -0,0 +1,43 @@
++/* This testcase is part of GDB, the GNU debugger.
++
++   Copyright 2005 Free Software Foundation, Inc.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 2 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program; if not, write to the Free Software
++   Foundation, Inc., 59 Temple Place - Suite 330,
++   Boston, MA 02111-1307, USA.  */
++
++#include <pthread.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++
++void *thread_function (void *ptr)
++{
++  int *x = (int *)ptr;
++  printf("In thread_function, *x is %d\n", *x);
++} /* thread_function_end */
++
++main()
++{
++  int ret;
++  pthread_t th;
++  int i = 3;
++
++  ret = pthread_create (&th, NULL, thread_function, &i);
++  pthread_join (th, NULL);
++  sleep (3);  /* sleep */
++  return 0;
++}
++
++
+--- gdb-6.3/gdb/testsuite/gdb.threads/step-thread-exit.exp.fix	2005-02-11 16:51:47.000000000 -0500
++++ gdb-6.3/gdb/testsuite/gdb.threads/step-thread-exit.exp	2005-02-11 18:28:23.000000000 -0500
+@@ -0,0 +1,100 @@
++# This testcase is part of GDB, the GNU debugger.
++
++# Copyright 2005 Free Software Foundation, Inc.
++
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 2 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  
++
++# Check that GDB can step over a thread exit.
++
++if $tracelevel {
++    strace $tracelevel
++}
++
++set prms_id 0
++set bug_id 0
++
++set testfile "step-thread-exit"
++set srcfile ${testfile}.c
++set binfile ${objdir}/${subdir}/${testfile}
++if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable [list debug "incdir=${objdir}"]] != "" } {
++    return -1
++}
++
++gdb_exit
++gdb_start
++gdb_reinitialize_dir $srcdir/$subdir
++gdb_load ${binfile}
++
++# Reset the debug file directory so we can't debug within the C library
++gdb_test "set debug-file-directory ." "" ""
++
++#
++# Run to `main' where we begin our tests.
++#
++
++if ![runto_main] then {
++    gdb_suppress_tests
++}
++
++set sleep_line [expr [gdb_get_line_number "sleep"]]
++set end_line [expr [gdb_get_line_number "thread_function_end"]]
++
++gdb_breakpoint "$end_line"
++gdb_test "continue" "Break.*thread_function.*" "continue to thread_function 1"
++
++# Keep nexting until we cause the thread to exit.  We expect the main
++# thread to be stopped and a message printed to tell us we have stepped
++# over the thread exit.
++set test "step over thread exit 1"
++gdb_test_multiple "next" "$test" {
++  -re "\}.*$gdb_prompt $" {
++     send_gdb "next\n"
++     exp_continue
++  }
++  -re "Thread.*exited.*Stepped over thread exit.*Program received signal SIGSTOP.*$gdb_prompt $" {
++     pass $test
++  }
++  -re "start_thread.*$gdb_prompt $" {
++     send_gdb "next\n"
++     exp_continue
++  }
++}
++
++gdb_test "bt" ".*sleep.*main.*$sleep_line.*" "backtrace after step 1"
++
++runto_main
++gdb_breakpoint "$sleep_line"
++gdb_breakpoint "$end_line"
++gdb_test "continue" "Break.*thread_function.*" "continue to thread_function 2"
++
++# Keep nexting until we cause the thread to exit.  In this case, we
++# expect the breakpoint in the main thread to have already triggered
++# and so we should stop there with a message that we stepped over
++# the thread exit.
++set test "step over thread exit 2"
++gdb_test_multiple "next" "$test" {
++  -re "\}.*$gdb_prompt $" {
++     send_gdb "next\n"
++     exp_continue
++  }
++  -re "Thread.*exited.*Stepped over thread exit.*Break.*$sleep_line.*" {
++     pass $test
++  }
++  -re "start_thread.*$gdb_prompt $" {
++     send_gdb "next\n"
++     exp_continue
++  }
++}
++
+--- gdb-6.3/gdb/infrun.c.fix	2005-02-11 16:50:08.000000000 -0500
++++ gdb-6.3/gdb/infrun.c	2005-02-11 16:52:45.000000000 -0500
+@@ -1072,6 +1072,7 @@ init_execution_control_state (struct exe
+   ecs->current_symtab = ecs->sal.symtab;
+   ecs->infwait_state = infwait_normal_state;
+   ecs->waiton_ptid = pid_to_ptid (-1);
++  ecs->ws.step_thread_exit = 0;
+   ecs->wp = &(ecs->ws);
+ }
+ 
+@@ -1296,6 +1297,16 @@ handle_inferior_event (struct execution_
+       ui_out_text (uiout, "]\n");
+     }
+ 
++  /* Check if were stepping a thread and we stepped over the exit.
++     In such a case, we will have found another event to process.
++     Clear any stepping state and process that event.  */
++  if (ecs->ws.step_thread_exit)
++    {
++      printf_unfiltered ("[Stepped over thread exit]\n");
++      clear_proceed_status ();
++      ecs->ws.step_thread_exit = 0;
++    }
++
+   switch (ecs->ws.kind)
+     {
+     case TARGET_WAITKIND_LOADED:
+@@ -2665,11 +2676,12 @@ process_event_stop_test:
+ static int
+ currently_stepping (struct execution_control_state *ecs)
+ {
+-  return ((!ecs->handling_longjmp
+-	   && ((step_range_end && step_resume_breakpoint == NULL)
+-	       || trap_expected))
+-	  || ecs->stepping_through_solib_after_catch
+-	  || bpstat_should_step ());
++  return (!ecs->ws.step_thread_exit 
++	  && ((!ecs->handling_longjmp
++	      && ((step_range_end && step_resume_breakpoint == NULL)
++	          || trap_expected))
++	     || ecs->stepping_through_solib_after_catch
++	     || bpstat_should_step ()));
+ }
+ 
+ /* Subroutine call with source code we should not step over.  Do step
+--- gdb-6.3/gdb/linux-nat.c.fix	2005-02-11 16:50:14.000000000 -0500
++++ gdb-6.3/gdb/linux-nat.c	2005-02-11 17:02:54.000000000 -0500
+@@ -1032,17 +1032,20 @@ linux_nat_detach (char *args, int from_t
+ static int
+ resume_callback (struct lwp_info *lp, void *data)
+ {
++  int step = (data != NULL);
++
+   if (lp->stopped && lp->status == 0)
+     {
+       struct thread_info *tp;
+ 
+-      child_resume (pid_to_ptid (GET_LWP (lp->ptid)), 0, TARGET_SIGNAL_0);
++      child_resume (pid_to_ptid (GET_LWP (lp->ptid)), step, TARGET_SIGNAL_0);
+       if (debug_linux_nat)
+ 	fprintf_unfiltered (gdb_stdlog,
+-			    "RC:  PTRACE_CONT %s, 0, 0 (resume sibling)\n",
++			    "RC:  %s %s, 0, 0 (resume sibling)\n",
++			    step ? "PTRACE_SINGLESTEP" : "PTRACE_CONT",
+ 			    target_pid_to_str (lp->ptid));
+       lp->stopped = 0;
+-      lp->step = 0;
++      lp->step = step;
+     }
+ 
+   return 0;
+@@ -1110,13 +1113,17 @@ linux_nat_resume (ptid_t ptid, int step,
+   if (resume_all)
+     iterate_over_lwps (resume_callback, NULL);
+ 
+-  child_resume (ptid, step, signo);
+-  if (debug_linux_nat)
+-    fprintf_unfiltered (gdb_stdlog,
+-			"LLR: %s %s, %s (resume event thread)\n",
+-			step ? "PTRACE_SINGLESTEP" : "PTRACE_CONT",
+-			target_pid_to_str (ptid),
+-			signo ? strsignal (signo) : "0");
++  if (lp)
++    {
++      child_resume (ptid, step, signo);
++
++      if (debug_linux_nat)
++        fprintf_unfiltered (gdb_stdlog,
++			    "LLR: %s %s, %s (resume event thread)\n",
++			    step ? "PTRACE_SINGLESTEP" : "PTRACE_CONT",
++			    target_pid_to_str (ptid),
++			    signo ? strsignal (signo) : "0");
++    }
+ }
+ 
+ /* Issue kill to specified lwp.  */
+@@ -1826,7 +1833,7 @@ stop_and_resume_callback (struct lwp_inf
+       for (ptr = lwp_list; ptr; ptr = ptr->next)
+ 	if (lp == ptr)
+ 	  {
+-	    resume_callback (lp, NULL);
++	    resume_callback (lp, data);
+ 	    resume_set_callback (lp, NULL);
+ 	  }
+     }
+@@ -1837,8 +1844,10 @@ static ptid_t
+ linux_nat_wait (ptid_t ptid, struct target_waitstatus *ourstatus)
+ {
+   struct lwp_info *lp = NULL;
++  struct lwp_info *step_lp = NULL;
+   int options = 0;
+   int status = 0;
++  int intentional_stop = 0;
+   pid_t pid = PIDGET (ptid);
+   sigset_t flush_mask;
+ 
+@@ -1864,14 +1873,12 @@ retry:
+      gets the expected trap so we don't want to wait on any LWP.
+      This has ramifications when adjustment of the PC is required which can be
+      different after a breakpoint vs a step (e.g. x86).  */
+-  lp = iterate_over_lwps (find_singlestep_lwp_callback, NULL);
+-  if (lp) {
++  step_lp = iterate_over_lwps (find_singlestep_lwp_callback, NULL);
++  if (step_lp) {
+     if (debug_linux_nat)
+       fprintf_unfiltered (gdb_stdlog,
+                          "LLW: Found step lwp %s.\n",
+-                         target_pid_to_str (lp->ptid));
+-    ptid = lp->ptid;
+-    pid = PIDGET (ptid);
++                         target_pid_to_str (step_lp->ptid));
+   }
+ 
+   /* If any pid, check if there is a LWP with a wait status pending.  */
+@@ -2134,8 +2141,9 @@ retry:
+ 	    }
+ 
+ 	  /* Make sure we don't report a SIGSTOP that we sent
+-	     ourselves in an attempt to stop an LWP.  */
+-	  if (lp->signalled
++	     ourselves in an attempt to stop an LWP, unless we
++	     intentionally want to see the SIGSTOP.  */
++	  if (lp->signalled && !intentional_stop
+ 	      && WIFSTOPPED (status) && WSTOPSIG (status) == SIGSTOP)
+ 	    {
+ 	      if (debug_linux_nat)
+@@ -2169,6 +2177,20 @@ retry:
+ 
+       if (pid == -1)
+ 	{
++	  lp = NULL;
++	  if (step_lp && errno == ECHILD)
++	    {
++	      /* We have stepped over a thread exit.  We want to stop
++	         the first existing lwp we find and report a stop event.  */
++	      for (lp = lwp_list; lp && lp == step_lp; lp = lp->next)
++		; /* empty */
++	    }
++	  if (lp != NULL)
++	    {
++  	      stop_callback (lp, NULL);
++	      intentional_stop = 1;
++	    }
++
+ 	  /* Alternate between checking cloned and uncloned processes.  */
+ 	  options ^= __WCLONE;
+ 
+@@ -2237,6 +2259,42 @@ retry:
+     fprintf_unfiltered (gdb_stdlog, "LLW: Candidate event %s in %s.\n",
+ 			status_to_str (status), target_pid_to_str (lp->ptid));
+ 
++  /* Check if there is any LWP that is being single-stepped.  We need to
++     wait specifically on such an LWP because the higher-level code is
++     expecting a step operation to find an event on the stepped LWP.
++     It is possible for other events to occur before the step operation
++     gets the expected trap so we don't want to wait on any LWP.
++     This has ramifications when adjustment of the PC is required which can be
++     different after a breakpoint vs a step (e.g. x86).  */
++  if (step_lp && step_lp != lp)
++    {
++      struct lwp_info *ptr;
++      int arg = 1;
++      if (debug_linux_nat)
++        fprintf_unfiltered (gdb_stdlog,
++                           "LLW: Found step lwp %s.\n",
++                           target_pid_to_str (step_lp->ptid));
++      stop_and_resume_callback (step_lp, &arg);
++      for (ptr = lwp_list; ptr; ptr = ptr->next)
++        if (step_lp == ptr)
++          break;
++
++      if (ptr)
++        {
++          if (debug_linux_nat)
++            fprintf_unfiltered (gdb_stdlog,
++                               "LLW: Continuing step lwp %s.\n",
++                               target_pid_to_str (step_lp->ptid));
++          ptid = step_lp->ptid;
++          pid = PIDGET (ptid);
++          lp->status = status; 
++          status = 0;
++          options = WNOHANG | (step_lp->cloned ? __WCLONE : 0);
++          pid = GET_LWP (ptid);
++          goto retry;
++        }
++    }
++
+   /* Now stop all other LWP's ...  */
+   iterate_over_lwps (stop_callback, NULL);
+ 
+@@ -2278,6 +2336,10 @@ retry:
+   else
+     store_waitstatus (ourstatus, status);
+ 
++  /* If we were stepping a thread and it exited, mark this.  */
++  if (step_lp && step_lp != lp)
++    ourstatus->step_thread_exit = 1;
++
+   return (threaded ? lp->ptid : pid_to_ptid (GET_LWP (lp->ptid)));
+ }
+ 
+--- gdb-6.3/gdb/target.h.fix	2005-02-11 16:50:19.000000000 -0500
++++ gdb-6.3/gdb/target.h	2005-02-11 16:52:52.000000000 -0500
+@@ -134,6 +134,7 @@ enum target_waitkind
+ struct target_waitstatus
+   {
+     enum target_waitkind kind;
++    int step_thread_exit;  /* non-zero if we step over a thread exit.  */
+ 
+     /* Forked child pid, execd pathname, exit status or signal number.  */
+     union

@@ -1,0 +1,182 @@
+Committed to mainline 2005-02-09
+
+2004-06-21  Andrew Cagney  <cagney@gnu.org>
+
+	* ppc-sysv-tdep.c (ppc64_sysv_abi_push_dummy_call)
+	(convert_code_addr_to_desc_addr): Convert all function's code
+	address to the function's descriptor.
+	(ppc64_sysv_abi_return_value): Handle TYPE_CODE_ENUM the same way
+	as TYPE_CODE_INT.
+
+Index: ./gdb/ppc-sysv-tdep.c
+===================================================================
+RCS file: /cvs/src/src/gdb/ppc-sysv-tdep.c,v
+retrieving revision 1.24
+diff -p -u -r1.24 ppc-sysv-tdep.c
+--- ./gdb/ppc-sysv-tdep.c	7 Jun 2004 02:02:52 -0000	1.24
++++ ./gdb/ppc-sysv-tdep.c	2 Dec 2004 14:57:23 -0000
+@@ -1,7 +1,8 @@
+ /* Target-dependent code for PowerPC systems using the SVR4 ABI
+    for GDB, the GNU debugger.
+ 
+-   Copyright 2000, 2001, 2002, 2003 Free Software Foundation, Inc.
++   Copyright 2000, 2001, 2002, 2003, 2004 Free Software Foundation,
++   Inc.
+ 
+    This file is part of GDB.
+ 
+@@ -533,6 +534,48 @@ ppc_sysv_abi_broken_return_value (struct
+ 				   writebuf, 1);
+ }
+ 
++/* The helper function for 64-bit SYSV push_dummy_call.  Converts the
++   function's code address back into the function's descriptor
++   address.  Needed to work around broken GCC debug info (pointing at
++   the entry-point instead of the descriptor).
++
++   Find a value for the TOC register.  Every symbol should have both
++   ".FN" and "FN" in the minimal symbol table.  "FN" points at the
++   FN's descriptor, while ".FN" points at the entry point (which
++   matches FUNC_ADDR).  Need to reverse from FUNC_ADDR back to the
++   FN's descriptor address (while at the same time being careful to
++   find "FN" in the same object file as ".FN").  */
++
++static int
++convert_code_addr_to_desc_addr (CORE_ADDR code_addr, CORE_ADDR *desc_addr)
++{
++  struct obj_section *dot_fn_section;
++  struct minimal_symbol *dot_fn;
++  struct minimal_symbol *fn;
++  CORE_ADDR toc;
++  /* Find the minimal symbol that corresponds to CODE_ADDR (should
++     have a name of the form ".FN").  */
++  dot_fn = lookup_minimal_symbol_by_pc (code_addr);
++  if (dot_fn == NULL || SYMBOL_LINKAGE_NAME (dot_fn)[0] != '.')
++    return 0;
++  /* Get the section that contains CODE_ADDR.  Need this for the
++     "objfile" that it contains.  */
++  dot_fn_section = find_pc_section (code_addr);
++  if (dot_fn_section == NULL || dot_fn_section->objfile == NULL)
++    return 0;
++  /* Now find the corresponding "FN" (dropping ".") minimal symbol's
++     address.  Only look for the minimal symbol in ".FN"'s object file
++     - avoids problems when two object files (i.e., shared libraries)
++     contain a minimal symbol with the same name.  */
++  fn = lookup_minimal_symbol (SYMBOL_LINKAGE_NAME (dot_fn) + 1, NULL,
++			      dot_fn_section->objfile);
++  if (fn == NULL)
++    return 0;
++  /* Found a descriptor.  */
++  (*desc_addr) = SYMBOL_VALUE_ADDRESS (fn);
++  return 1;
++}
++
+ /* Pass the arguments in either registers, or in the stack. Using the
+    ppc 64 bit SysV ABI.
+ 
+@@ -703,15 +746,25 @@ ppc64_sysv_abi_push_dummy_call (struct g
+ 		}
+ 	    }
+ 	  else if ((TYPE_CODE (type) == TYPE_CODE_INT
+-		    || TYPE_CODE (type) == TYPE_CODE_ENUM)
++		    || TYPE_CODE (type) == TYPE_CODE_ENUM
++		    || TYPE_CODE (type) == TYPE_CODE_PTR)
+ 		   && TYPE_LENGTH (type) <= 8)
+ 	    {
+-	      /* Scalars get sign[un]extended and go in gpr3 .. gpr10.
+-	         They can also end up in memory.  */
++	      /* Scalars and Pointers get sign[un]extended and go in
++	         gpr3 .. gpr10.  They can also end up in memory.  */
+ 	      if (write_pass)
+ 		{
+ 		  /* Sign extend the value, then store it unsigned.  */
+ 		  ULONGEST word = unpack_long (type, val);
++		  /* Convert any function code addresses into
++		     descriptors.  */
++		  if (TYPE_CODE (type) == TYPE_CODE_PTR
++		      && TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_FUNC)
++		    {
++		      CORE_ADDR desc = word;
++		      convert_code_addr_to_desc_addr (word, &desc);
++		      word = desc;
++		    }
+ 		  if (greg <= 10)
+ 		    regcache_cooked_write_unsigned (regcache,
+ 						    tdep->ppc_gp0_regnum +
+@@ -764,6 +817,11 @@ ppc64_sysv_abi_push_dummy_call (struct g
+ 		   value to memory.  Fortunately, doing this
+ 		   simplifies the code.  */
+ 		write_memory (gparam, val, TYPE_LENGTH (type));
++	      if (write_pass)
++		/* WARNING: cagney/2004-06-20: It appears that GCC
++		   likes to put structures containing a single
++		   floating-point member in an FP register instead of
++		   general general purpose.  */
+ 	      /* Always consume parameter stack space.  */
+ 	      gparam = align_up (gparam + TYPE_LENGTH (type), tdep->wordsize);
+ 	    }
+@@ -792,43 +850,18 @@ ppc64_sysv_abi_push_dummy_call (struct g
+      breakpoint.  */
+   regcache_cooked_write_signed (regcache, tdep->ppc_lr_regnum, bp_addr);
+ 
+-  /* Find a value for the TOC register.  Every symbol should have both
+-     ".FN" and "FN" in the minimal symbol table.  "FN" points at the
+-     FN's descriptor, while ".FN" points at the entry point (which
+-     matches FUNC_ADDR).  Need to reverse from FUNC_ADDR back to the
+-     FN's descriptor address (while at the same time being careful to
+-     find "FN" in the same object file as ".FN").  */
++  /* Use the func_addr to find the descriptor, and use that to find
++     the TOC.  */
+   {
+-    /* Find the minimal symbol that corresponds to FUNC_ADDR (should
+-       have the name ".FN").  */
+-    struct minimal_symbol *dot_fn = lookup_minimal_symbol_by_pc (func_addr);
+-    if (dot_fn != NULL && SYMBOL_LINKAGE_NAME (dot_fn)[0] == '.')
++    CORE_ADDR desc_addr;
++    if (convert_code_addr_to_desc_addr (func_addr, &desc_addr))
+       {
+-	/* Get the section that contains FUNC_ADR.  Need this for the
+-           "objfile" that it contains.  */
+-	struct obj_section *dot_fn_section = find_pc_section (func_addr);
+-	if (dot_fn_section != NULL && dot_fn_section->objfile != NULL)
+-	  {
+-	    /* Now find the corresponding "FN" (dropping ".") minimal
+-	       symbol's address.  Only look for the minimal symbol in
+-	       ".FN"'s object file - avoids problems when two object
+-	       files (i.e., shared libraries) contain a minimal symbol
+-	       with the same name.  */
+-	    struct minimal_symbol *fn =
+-	      lookup_minimal_symbol (SYMBOL_LINKAGE_NAME (dot_fn) + 1, NULL,
+-				     dot_fn_section->objfile);
+-	    if (fn != NULL)
+-	      {
+-		/* Got the address of that descriptor.  The TOC is the
+-		   second double word.  */
+-		CORE_ADDR toc =
+-		  read_memory_unsigned_integer (SYMBOL_VALUE_ADDRESS (fn)
+-						+ tdep->wordsize,
+-						tdep->wordsize);
+-		regcache_cooked_write_unsigned (regcache,
+-						tdep->ppc_gp0_regnum + 2, toc);
+-	      }
+-	  }
++	/* The TOC is the second double word in the descriptor.  */
++	CORE_ADDR toc =
++	  read_memory_unsigned_integer (desc_addr + tdep->wordsize,
++					tdep->wordsize);
++	regcache_cooked_write_unsigned (regcache,
++					tdep->ppc_gp0_regnum + 2, toc);
+       }
+   }
+ 
+@@ -875,7 +908,9 @@ ppc64_sysv_abi_return_value (struct gdba
+ 	}
+       return RETURN_VALUE_REGISTER_CONVENTION;
+     }
+-  if (TYPE_CODE (valtype) == TYPE_CODE_INT && TYPE_LENGTH (valtype) <= 8)
++  if ((TYPE_CODE (valtype) == TYPE_CODE_INT
++       || TYPE_CODE (valtype) == TYPE_CODE_ENUM)
++      && TYPE_LENGTH (valtype) <= 8)
+     {
+       /* Integers in r3.  */
+       if (writebuf != NULL)

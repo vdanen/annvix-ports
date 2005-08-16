@@ -1,0 +1,175 @@
+Committed to mainline 2005-01-12
+
+Index: ./gdb/testsuite/ChangeLog
+2005-01-21  Andrew Cagney  <cagney@gnu.org>
+
+	* gdb.base/sigrepeat.exp, gdb.base/sigrepeat.c: New test.
+
+Index: ./gdb/testsuite/gdb.base/sigrepeat.c
+===================================================================
+RCS file: ./gdb/testsuite/gdb.base/sigrepeat.c
+diff -N ./gdb/testsuite/gdb.base/sigrepeat.c
+--- /dev/null	1 Jan 1970 00:00:00 -0000
++++ ./gdb/testsuite/gdb.base/sigrepeat.c	21 Jan 2005 22:14:43 -0000
+@@ -0,0 +1,90 @@
++/* This testcase is part of GDB, the GNU debugger.
++
++   Copyright 2004, 2005 Free Software Foundation, Inc.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 2 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++ 
++   You should have received a copy of the GNU General Public License
++   along with this program; if not, write to the Free Software
++   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++
++*/
++
++#include <stdio.h>
++#include <string.h>
++#include <signal.h>
++#include <sys/time.h>
++
++
++static volatile int done;
++
++static void
++handler (int sig)
++{
++  static volatile int repeats;
++  if (repeats++ > 5)
++    {
++      /* Hit with enough signals, cancel everything and get out.  */
++      {
++	struct itimerval itime;
++	memset (&itime, 0, sizeof (itime));
++	setitimer (ITIMER_REAL, &itime, NULL);
++      }
++      {
++	struct sigaction action;
++	memset (&action, 0, sizeof (action));
++	action.sa_handler = SIG_IGN;
++	sigaction (SIGALRM, &action, NULL);
++      }
++      done = 1;
++    }
++  else while (1)
++    {
++      /* Wait until a signal has become pending, that way when this
++	 handler returns it will be immediatly delivered leading to
++	 back-to-back signals.  */
++      sigset_t set;
++      sigemptyset (&set);
++      if (sigpending (&set) < 0)
++	{
++	  perror ("sigrepeat");
++	  exit (1);
++	}
++      if (sigismember (&set, SIGALRM))
++	break;
++    }
++} /* handler */
++
++main ()
++{
++  /* Set up the signal handler.  */
++  {
++    struct sigaction action;
++    memset (&action, 0, sizeof (action));
++    action.sa_handler = handler;
++    sigaction (SIGALRM, &action, NULL);
++  }
++
++  /* Set up a rapidly repeating timer.  A timer, rather than SIGSEGV,
++     is used as after a timer handler returns the interrupted code can
++     safely resume.  The intent is for the program to swamp GDB with a
++     backlog of pending signals.  */
++  {
++    struct itimerval itime;
++    memset (&itime, 0, sizeof (itime));
++    itime.it_interval.tv_usec = 1;
++    itime.it_value.tv_usec = 250 * 1000;
++    setitimer (ITIMER_REAL, &itime, NULL);
++  }
++
++  /* Wait.  */
++  while (!done);
++}
+Index: ./gdb/testsuite/gdb.base/sigrepeat.exp
+===================================================================
+RCS file: ./gdb/testsuite/gdb.base/sigrepeat.exp
+diff -N ./gdb/testsuite/gdb.base/sigrepeat.exp
+--- /dev/null	1 Jan 1970 00:00:00 -0000
++++ ./gdb/testsuite/gdb.base/sigrepeat.exp	21 Jan 2005 22:14:43 -0000
+@@ -0,0 +1,64 @@
++# Copyright 2004, 2005 Free Software Foundation, Inc.
++
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 2 of the License, or
++# (at your option) any later version.
++# 
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++# 
++# You should have received a copy of the GNU General Public License
++# along with this program; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  
++
++
++# The program sigrepeat.c creates a repeating timer and then waits for
++# it to fire multiple times.  The objective is to create a backlog if
++# sigalrm signals and hence cause repeated signal delivery without any
++# cpu advancment.
++
++if [target_info exists gdb,nosignals] {
++    verbose "Skipping sigstep.exp because of nosignals."
++    continue
++}
++
++if $tracelevel then {
++    strace $tracelevel
++}
++
++set prms_id 0
++set bug_id 0
++
++set testfile sigrepeat
++set srcfile ${testfile}.c
++set binfile ${objdir}/${subdir}/${testfile}
++if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
++    untested "Couldn't compile ${module}.c"
++    return -1
++}
++
++# get things started
++gdb_exit
++gdb_start
++gdb_reinitialize_dir $srcdir/$subdir
++gdb_load ${binfile}
++
++gdb_test "display/i \$pc"
++
++# Advance to main
++if { ![runto_main] } then {
++    gdb_suppress_tests;
++}
++
++# Run to the signal handler wait loop.
++set infinite_loop [gdb_get_line_number {while (!done)}]
++gdb_test "advance $infinite_loop" "" "advance to infinite loop"
++
++# Make the first of many signals come pending
++sleep 1
++
++# Try to step off this line
++gdb_test "next" 

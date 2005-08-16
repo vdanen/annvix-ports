@@ -1,0 +1,126 @@
+2004-06-24  Andrew Cagney  <cagney@redhat.com>
+            Roland McGrath  <roland@redhat.com>
+
+        * symfile-mem.c: Include "observer.h", "auxv.h", and
+        "elf/common.h".
+        (struct symbol_file_add_from_memory_args)
+        (symbol_file_add_from_memory_wrapper, add_vsyscall_page)
+        (_initialize_symfile_mem): Add an inferior_created observer, use
+        to load the vsyscall page.
+        * Makefile.in (symfile-mem.o): Update dependencies.
+
+2004-07-08  Daniel J
+
+        * i386-linux-tdep.c: Recognize __kernel_vsyscall as a signal trampoline.
+
+--- gdb-6.3/gdb/symfile-mem.c.fix	Thu Dec 16 17:20:37 2004
++++ gdb-6.3/gdb/symfile-mem.c	Thu Dec 16 17:21:23 2004
+@@ -52,6 +52,9 @@
+ #include "target.h"
+ #include "value.h"
+ #include "symfile.h"
++#include "observer.h"
++#include "auxv.h"
++#include "elf/common.h"
+ 
+ 
+ /* Read inferior memory at ADDR to find the header of a loaded object file
+@@ -132,6 +135,68 @@ Must use symbol-file or exec-file before
+   symbol_file_add_from_memory (templ, addr, from_tty);
+ }
+ 
++/* When ever a new inferior is created, try to load its vsyscall
++   page.  */
++
++struct symbol_file_add_from_memory_args
++{
++  struct bfd *abfd;
++  CORE_ADDR sysinfo_ehdr;
++  int from_tty;
++};
++
++static int
++symbol_file_add_from_memory_wrapper (struct ui_out *uiout, void *data)
++{
++  struct symbol_file_add_from_memory_args *args = data;
++
++  symbol_file_add_from_memory (args->abfd, args->sysinfo_ehdr, args->from_tty);
++  return 0;
++}
++
++static void
++add_vsyscall_page (struct target_ops *target, int from_tty)
++{
++  CORE_ADDR sysinfo_ehdr;
++  struct bfd *abfd;
++  struct symbol_file_add_from_memory_args args;
++  
++  if (target_auxv_search (target, AT_SYSINFO_EHDR, &sysinfo_ehdr) <= 0)
++    return;
++  if (sysinfo_ehdr == 0)
++    return;
++
++  /* Find a corresponding BFD.  */
++  /* FIXME: cagney/2004-05-06: Should not require an existing BFD when
++     trying to create a run-time BFD of the VSYSCALL page in the
++     inferior.  Unfortunatly that's the current interface so for the
++     moment bail.  Introducing a ``bfd_runtime'' (a BFD created using
++     the loaded image) file format should fix this.  */
++  if (core_bfd != NULL)
++    abfd = core_bfd;
++  else if (exec_bfd != NULL)
++    abfd = exec_bfd;
++  else
++    {
++      warning ("\
++The current VSYSCALL page code requires an existing execuitable. \n\
++Use \"add-symbol-file-from-memory\" to load the VSYSCALL page by hand");
++      return;
++    }
++
++  /* Do the call, but catch any errors.  Throwing an error here would
++     abort the underlying command.  Not good.  */
++  args.abfd = abfd;
++  args.sysinfo_ehdr = sysinfo_ehdr;
++  args.from_tty = from_tty;
++  if (catch_exceptions (uiout, symbol_file_add_from_memory_wrapper,
++			&args, NULL, RETURN_MASK_ALL) >= 0)
++    {
++      if (info_verbose || from_tty)
++	printf_unfiltered ("Loaded system supplied DSO at 0x%s\n",
++			   paddr_nz (sysinfo_ehdr));
++    }
++}
+ 
+ void
+ _initialize_symfile_mem (void)
+@@ -143,4 +208,7 @@ Load the symbols out of memory from a dy
+ Give an expression for the address of the file's shared object file header.",
+            &cmdlist);
+ 
++  /* Want to know of each new inferior so that it's vsyscall info can
++     be extracted.  */
++  observer_attach_inferior_created (add_vsyscall_page);
+ }
+--- gdb-6.3/gdb/Makefile.in.fix	Thu Dec 16 17:20:40 2004
++++ gdb-6.3/gdb/Makefile.in	Thu Dec 16 17:21:23 2004
+@@ -2629,7 +2629,8 @@ symfile.o: symfile.c $(defs_h) $(bfdlink
+ 	$(hashtab_h) $(readline_h) $(gdb_assert_h) $(block_h) \
+ 	$(gdb_string_h) $(gdb_stat_h)
+ symfile-mem.o: symfile-mem.c $(defs_h) $(symtab_h) $(gdbcore_h) \
+-	$(objfiles_h) $(gdbcmd_h) $(target_h) $(value_h) $(symfile_h)
++	$(objfiles_h) $(gdbcmd_h) $(target_h) $(value_h) $(symfile_h) \
++	$(observer_h) $(auxv_h) $(elf_common_h)
+ symmisc.o: symmisc.c $(defs_h) $(symtab_h) $(gdbtypes_h) $(bfd_h) \
+ 	$(symfile_h) $(objfiles_h) $(breakpoint_h) $(command_h) \
+ 	$(gdb_obstack_h) $(language_h) $(bcache_h) $(block_h) $(gdb_regex_h) \
+--- gdb-6.3/gdb/i386-linux-tdep.c.fix	Thu Dec 16 17:20:53 2004
++++ gdb-6.3/gdb/i386-linux-tdep.c	Thu Dec 16 17:21:23 2004
+@@ -241,6 +241,7 @@ i386_linux_sigtramp_p (struct frame_info
+ 	    || i386_linux_rt_sigtramp_start (next_frame) != 0);
+ 
+   return (strcmp ("__restore", name) == 0
++	  || strcmp ("__kernel_sigreturn", name) == 0
+ 	  || strcmp ("__restore_rt", name) == 0);
+ }
+ 

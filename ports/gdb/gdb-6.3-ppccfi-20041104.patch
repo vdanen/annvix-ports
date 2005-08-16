@@ -1,0 +1,161 @@
+2004-11-04  Andrew Cagney  <cagney@gnu.org>
+
+	* dwarf2-frame.c (dwarf2_frame_prev_register): Handle
+	DWARF2_FRAME_REG_INDIRECT.
+	(dwarf2_frame_cache): Only complain when both COLUMN and REGNUM
+	are unspecified.
+	* dwarf2-frame.h (enum dwarf2_frame_reg_rule): Add
+	DWARF2_FRAME_REG_INDIRECT.
+	* ppc-linux-tdep.c (ppc_linux_init_reg): New function.
+	(ppc_linux_init_abi): Enable dwarf2 frame sniffer.
+
+Index: ./gdb/dwarf2-frame.c
+===================================================================
+RCS file: /cvs/src/src/gdb/dwarf2-frame.c,v
+retrieving revision 1.38
+diff -p -u -r1.38 dwarf2-frame.c
+--- ./gdb/dwarf2-frame.c	23 Jul 2004 22:05:20 -0000	1.38
++++ ./gdb/dwarf2-frame.c	4 Nov 2004 21:55:10 -0000
+@@ -662,22 +662,27 @@ dwarf2_frame_cache (struct frame_info *n
+ 	if (regnum < 0 || regnum >= num_regs)
+ 	  continue;
+ 
+-	/* NOTE: cagney/2003-09-05: CFI should specify the disposition
+-	   of all debug info registers.  If it doesn't, complain (but
+-	   not too loudly).  It turns out that GCC assumes that an
+-	   unspecified register implies "same value" when CFI (draft
+-	   7) specifies nothing at all.  Such a register could equally
+-	   be interpreted as "undefined".  Also note that this check
+-	   isn't sufficient; it only checks that all registers in the
+-	   range [0 .. max column] are specified, and won't detect
+-	   problems when a debug info register falls outside of the
+-	   table.  We need a way of iterating through all the valid
+-	   DWARF2 register numbers.  */
+ 	if (fs->regs.reg[column].how == DWARF2_FRAME_REG_UNSPECIFIED)
+-	  complaint (&symfile_complaints,
+-		     "Incomplete CFI data; unspecified registers at 0x%s",
+-		     paddr (fs->pc));
+-	else
++	  {
++	    /* NOTE: cagney/2003-09-05: CFI should specify the
++	       disposition of all debug info registers.  If it
++	       doesn't, complain (but not too loudly).  It turns out
++	       that GCC assumes that an unspecified register implies
++	       "same value" when CFI (draft 7) specifies nothing at
++	       all.  Such a register could equally be interpreted as
++	       "undefined".  Also note that this check isn't
++	       sufficient; it only checks that all registers in the
++	       range [0 .. max column] are specified, and won't detect
++	       problems when a debug info register falls outside of
++	       the table.  We need a way of iterating through all the
++	       valid DWARF2 register numbers.  */
++	    if (cache->reg[regnum].how == DWARF2_FRAME_REG_UNSPECIFIED)
++	      complaint (&symfile_complaints,
++			 "Incomplete CFI data; unspecified register %s at 0x%s",
++			 gdbarch_register_name (gdbarch, regnum),
++			 paddr (fs->pc));
++	  }
++	else 
+ 	  cache->reg[regnum] = fs->regs.reg[column];
+       }
+   }
+@@ -818,6 +823,13 @@ dwarf2_frame_prev_register (struct frame
+ 	}
+       break;
+ 
++    case DWARF2_FRAME_REG_INDIRECT:
++      regnum = DWARF2_REG_TO_REGNUM (cache->reg[regnum].loc.reg);
++      dwarf2_frame_prev_register (next_frame, this_cache, regnum,
++				  optimizedp, lvalp, addrp, realnump,
++				  valuep);
++      break;
++
+     default:
+       internal_error (__FILE__, __LINE__, "Unknown register rule.");
+     }
+Index: ./gdb/dwarf2-frame.h
+===================================================================
+RCS file: /cvs/src/src/gdb/dwarf2-frame.h,v
+retrieving revision 1.6
+diff -p -u -r1.6 dwarf2-frame.h
+--- ./gdb/dwarf2-frame.h	28 Feb 2004 16:59:32 -0000	1.6
++++ ./gdb/dwarf2-frame.h	4 Nov 2004 21:55:10 -0000
+@@ -51,8 +51,13 @@ enum dwarf2_frame_reg_rule
+   DWARF2_FRAME_REG_SAVED_EXP,
+   DWARF2_FRAME_REG_SAME_VALUE,
+ 
++  /* Internal to GDB.  This register's value is really in the other
++     register.  */
++  DWARF2_FRAME_REG_INDIRECT,
++
+   /* These aren't defined by the DWARF2 CFI specification, but are
+-     used internally by GDB.  */
++     used internally by GDB.  These should be superseeded by
++     REG_INDIRECT.  */
+   DWARF2_FRAME_REG_RA,		/* Return Address.  */
+   DWARF2_FRAME_REG_CFA		/* Call Frame Address.  */
+ };
+Index: ./gdb/ppc-linux-tdep.c
+===================================================================
+RCS file: /cvs/src/src/gdb/ppc-linux-tdep.c,v
+retrieving revision 1.66
+diff -p -u -r1.66 ppc-linux-tdep.c
+--- ./gdb/ppc-linux-tdep.c	31 Jul 2004 21:53:17 -0000	1.66
++++ ./gdb/ppc-linux-tdep.c	4 Nov 2004 21:55:10 -0000
+@@ -38,6 +38,7 @@
+ #include "trad-frame.h"
+ #include "frame-unwind.h"
+ #include "tramp-frame.h"
++#include "dwarf2-frame.h"
+ 
+ /* The following instructions are used in the signal trampoline code
+    on GNU/Linux PPC. The kernel used to use magic syscalls 0x6666 and
+@@ -1057,6 +1058,39 @@ ppc_linux_regset_from_core_section (stru
+ }
+ 
+ static void
++ppc_linux_init_reg (struct gdbarch *gdbarch, int regnum,
++		    struct dwarf2_frame_state_reg *state)
++{
++  /* NOTE: REGNUM is a GDB register number and not a DWARF 2 register
++     number.  */
++  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
++  if (regnum == 65)
++    {
++      /* FIXME: cagney/2004-11-04: "65" here is a DWARF 2 register
++	 number.  What happens is dwarf2_reg_to_regnum fails to
++	 recognize it and just passes it through.  If that function
++	 were to ever be "fixed" (return GDB's idea of the FPSCR) then
++	 we would be in real strife.  */
++      state->how = DWARF2_FRAME_REG_INDIRECT;
++      state->loc.reg = 108; /* DWARF 2 link-register.  */
++    }
++  else if (regnum == PC_REGNUM)
++    {
++      /* FIXME: cagney/2004-11-04: "65" here is a DWARF 2 register
++	 number.  What happens is dwarf2_reg_to_regnum fails to
++	 recognize it and just passes it through.  If that function
++	 were to ever be "fixed" (return GDB's idea of the FPSCR) then
++	 we would be in real strife.  */
++      state->how = DWARF2_FRAME_REG_INDIRECT;
++      state->loc.reg = 65; /* DWARF 2 return Address register.  */
++    }
++  else if (regnum == SP_REGNUM)
++    state->how = DWARF2_FRAME_REG_CFA;
++  else
++    state->how = DWARF2_FRAME_REG_SAME_VALUE;
++};
++
++static void
+ ppc_linux_init_abi (struct gdbarch_info info,
+                     struct gdbarch *gdbarch)
+ {
+@@ -1180,6 +1181,8 @@
+       tramp_frame_prepend_unwinder (gdbarch, &ppc64_linux_sighandler_tramp_frame);
+     }
+   set_gdbarch_regset_from_core_section (gdbarch, ppc_linux_regset_from_core_section);
++  frame_unwind_append_sniffer (gdbarch, dwarf2_frame_sniffer);
++  dwarf2_frame_set_init_reg (gdbarch, ppc_linux_init_reg);
+ }
+ 
+ void

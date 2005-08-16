@@ -1,0 +1,58 @@
+2004-06-21  Andrew Cagney  <cagney@gnu.org>
+
+	* i386-tdep.c (i386_gdbarch_init): Move the the dwarf2-frame
+	sniffer registration to after the signal trampoline frame sniffer.
+	* amd64-tdep.c (amd64_init_abi): Include "dwarf2-frame.h".
+	Register the dwarf2-frame sniffer, but after the signal trampoline
+	sniffer.
+	
+Index: ./gdb/amd64-tdep.c
+===================================================================
+RCS file: /cvs/src/src/gdb/amd64-tdep.c,v
+retrieving revision 1.15
+diff -p -u -r1.15 amd64-tdep.c
+--- ./gdb/amd64-tdep.c	7 Jun 2004 02:02:45 -0000	1.15
++++ ./gdb/amd64-tdep.c	21 Jun 2004 20:16:34 -0000
+@@ -34,7 +34,7 @@
+ #include "regcache.h"
+ #include "regset.h"
+ #include "symfile.h"
+-
++#include "dwarf2-frame.h"
+ #include "gdb_assert.h"
+ 
+ #include "amd64-tdep.h"
+@@ -1171,6 +1171,8 @@ amd64_init_abi (struct gdbarch_info info
+   set_gdbarch_in_solib_call_trampoline (gdbarch, in_plt_section);
+ 
+   frame_unwind_append_sniffer (gdbarch, amd64_sigtramp_frame_sniffer);
++  /* Hook in the DWARF CFI frame unwinder after sigtramp.  */
++  frame_unwind_append_sniffer (gdbarch, dwarf2_frame_sniffer);
+   frame_unwind_append_sniffer (gdbarch, amd64_frame_sniffer);
+   frame_base_set_default (gdbarch, &amd64_frame_base);
+ 
+Index: ./gdb/i386-tdep.c
+===================================================================
+RCS file: /cvs/src/src/gdb/i386-tdep.c,v
+retrieving revision 1.197
+diff -p -u -r1.197 i386-tdep.c
+--- ./gdb/i386-tdep.c	18 Jun 2004 16:06:24 -0000	1.197
++++ ./gdb/i386-tdep.c	21 Jun 2004 20:16:34 -0000
+@@ -2131,15 +2131,14 @@ i386_gdbarch_init (struct gdbarch_info i
+   /* Helper for function argument information.  */
+   set_gdbarch_fetch_pointer_argument (gdbarch, i386_fetch_pointer_argument);
+ 
+-  /* Hook in the DWARF CFI frame unwinder.  */
+-  frame_unwind_append_sniffer (gdbarch, dwarf2_frame_sniffer);
+-
+   frame_base_set_default (gdbarch, &i386_frame_base);
+ 
+   /* Hook in ABI-specific overrides, if they have been registered.  */
+   gdbarch_init_osabi (info, gdbarch);
+ 
+   frame_unwind_append_sniffer (gdbarch, i386_sigtramp_frame_sniffer);
++  /* Hook in the DWARF CFI frame unwinder after sigtramp.  */
++  frame_unwind_append_sniffer (gdbarch, dwarf2_frame_sniffer);
+   frame_unwind_append_sniffer (gdbarch, i386_frame_sniffer);
+ 
+   /* If we have a register mapping, enable the generic core file

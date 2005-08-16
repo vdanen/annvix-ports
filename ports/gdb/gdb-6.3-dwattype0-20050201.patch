@@ -1,0 +1,18 @@
+2005-02-01  Jeff Johnston  <jjohnstn@redhat.com>
+
+        * dwarf2read.c (die_type): Tolerate a type reference to location
+        <0> and treat as unknown type.
+
+--- gdb-6.3/gdb/dwarf2read.c.fix	Tue Feb  1 16:48:49 2005
++++ gdb-6.3/gdb/dwarf2read.c	Tue Feb  1 16:50:12 2005
+@@ -7120,6 +7120,10 @@ die_type (struct die_info *die, struct d
+       /* A missing DW_AT_type represents a void type.  */
+       return dwarf2_fundamental_type (cu->objfile, FT_VOID, cu);
+     }
++  else if (DW_ADDR (type_attr) == 0)
++    /* If we have an invalid reference to 0, ignore it and treat
++       the type as unknown.  */
++    return builtin_type_error;
+   else
+     type_die = follow_die_ref (die, type_attr, cu);
+ 

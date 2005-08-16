@@ -1,0 +1,99 @@
+2004-10-26  Andrew Cagney  <cagney@gnu.org>
+
+	* blockframe.c (find_pc_function): Use find_pc_section to find the
+	pc's section.
+	* block.c, symfile.c: Ditto.
+
+*** ./gdb/blockframe.c.1	2004-10-26 21:21:46.517866240 -0400
+--- ./gdb/blockframe.c	2004-10-26 21:24:16.345089040 -0400
+***************
+*** 288,294 ****
+  struct symbol *
+  find_pc_function (CORE_ADDR pc)
+  {
+!   return find_pc_sect_function (pc, find_pc_mapped_section (pc));
+  }
+  
+  /* These variables are used to cache the most recent result
+--- 288,311 ----
+  struct symbol *
+  find_pc_function (CORE_ADDR pc)
+  {
+!   struct bfd_section *section;
+!   struct symbol *symbol;
+!   /* To ensure that the symbol returned belongs to the correct setion
+!      (and that the last [random] symbol from the previous section
+!      isn't returned) try to find the section containing PC.  First try
+!      the overlay code (which by default returns NULL); and second try
+!      the normal section code (which almost always succeeds).  */
+!   section = find_pc_overlay (pc);
+!   if (section == NULL)
+!     {
+!       struct obj_section *obj_section = find_pc_section (pc);
+!       if (obj_section == NULL)
+! 	section = NULL;
+!       else
+! 	section = obj_section->the_bfd_section;
+!     }
+!   symbol = find_pc_sect_function (pc, section);
+!   return symbol;
+  }
+  
+  /* These variables are used to cache the most recent result
+--- ./gdb/symtab.c.1	2004-10-26 22:47:13.650423616 -0400
++++ ./gdb/symtab.c	2004-10-26 22:50:10.239577984 -0400
+@@ -2176,7 +2176,20 @@
+ {
+   asection *section;
+ 
++  /* To ensure that the symbol returned belongs to the correct setion
++     (and that the last [random] symbol from the previous section
++     isn't returned) try to find the section containing PC.  First try
++     the overlay code (which by default returns NULL); and second try
++     the normal section code (which almost always succeeds).  */
+   section = find_pc_overlay (pc);
++  if (section == NULL)
++    {
++      struct obj_section *obj_section = find_pc_section (pc);
++      if (obj_section == NULL)
++	section = NULL;
++      else
++	section = obj_section->the_bfd_section;
++    }
+   if (pc_in_unmapped_range (pc, section))
+     pc = overlay_mapped_address (pc, section);
+   return find_pc_sect_line (pc, section, notcurrent);
+--- ./gdb/block.c.1	2004-10-27 00:22:56.881319808 -0400
++++ ./gdb/block.c	2004-10-27 00:24:17.364084568 -0400
+@@ -25,6 +25,7 @@
+ #include "symfile.h"
+ #include "gdb_obstack.h"
+ #include "cp-support.h"
++#include "objfiles.h"
+ 
+ /* This is used by struct block to store namespace-related info for
+    C++ files, namely using declarations and the current namespace in
+@@ -153,7 +154,22 @@
+ struct block *
+ block_for_pc (CORE_ADDR pc)
+ {
+-  return block_for_pc_sect (pc, find_pc_mapped_section (pc));
++  struct bfd_section *section;
++  /* To ensure that the symbol returned belongs to the correct setion
++     (and that the last [random] symbol from the previous section
++     isn't returned) try to find the section containing PC.  First try
++     the overlay code (which by default returns NULL); and second try
++     the normal section code (which almost always succeeds).  */
++  section = find_pc_overlay (pc);
++  if (section == NULL)
++    {
++      struct obj_section *obj_section = find_pc_section (pc);
++      if (obj_section == NULL)
++	section = NULL;
++      else
++	section = obj_section->the_bfd_section;
++    }
++  return block_for_pc_sect (pc, section);
+ }
+ 
+ /* Now come some functions designed to deal with C++ namespace issues.

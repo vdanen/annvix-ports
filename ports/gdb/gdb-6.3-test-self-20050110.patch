@@ -1,0 +1,93 @@
+2004-02-23  Elena Zannoni  <ezannoni@redhat.com>
+
+        * gdb.gdb/selftest.exp: Make sure that the debug directory is
+        set up properly.
+        * gdb.gdb/complaints.exp: Ditto.
+        * gdb.gdb/xfullpath.exp: Ditto.
+        * gdb.gdb/observer.exp: Ditto.
+
+--- gdb-6.3/gdb/testsuite/gdb.gdb/complaints.exp.fix	Mon Jan 10 19:21:20 2005
++++ gdb-6.3/gdb/testsuite/gdb.gdb/complaints.exp	Mon Jan 10 19:24:38 2005
+@@ -304,13 +304,13 @@ proc find_gdb { arg } {
+ set GDB_FULLPATH [find_gdb $GDB]
+ 
+ # Remove any old copy lying around.
+-remote_file host delete x$tool
++#remote_file host delete x$tool
+ 
+ gdb_start
+ 
+-set file [remote_download host $GDB_FULLPATH x$tool]
++#set file [remote_download host $GDB_FULLPATH x$tool]
+ 
+-set setup_result [setup_test $file ]
++set setup_result [setup_test $GDB_FULLPATH ]
+ if {$setup_result <0} then {
+     return -1
+ }
+@@ -321,4 +321,4 @@ test_short_complaints
+ test_empty_complaints
+ 
+ gdb_exit;
+-catch "remote_file host delete $file";
++#catch "remote_file host delete $file";
+--- gdb-6.3/gdb/testsuite/gdb.gdb/observer.exp.fix	Mon Jan 10 19:21:27 2005
++++ gdb-6.3/gdb/testsuite/gdb.gdb/observer.exp	Mon Jan 10 19:24:38 2005
+@@ -259,13 +259,13 @@ proc find_gdb { arg } {
+ set GDB_FULLPATH [find_gdb $GDB]
+ 
+ # Remove any old copy lying around.
+-remote_file host delete x$tool
++#remote_file host delete x$tool
+ 
+ gdb_start
+-set file [remote_download host $GDB_FULLPATH x$tool]
+-set result [test_observer_normal_stop $file];
++#set file [remote_download host $GDB_FULLPATH x$tool]
++set result [test_observer_normal_stop $GDB_FULLPATH];
+ gdb_exit;
+-catch "remote_file host delete $file";
++#catch "remote_file host delete $file";
+ 
+ if {$result <0} then {
+     warning "Couldn't test self"
+--- gdb-6.3/gdb/testsuite/gdb.gdb/selftest.exp.fix	Mon Jan 10 19:21:33 2005
++++ gdb-6.3/gdb/testsuite/gdb.gdb/selftest.exp	Mon Jan 10 19:24:38 2005
+@@ -512,13 +512,13 @@ proc find_gdb { arg } {
+ set GDB_FULLPATH [find_gdb $GDB]
+ 
+ # Remove any old copy lying around.
+-remote_file host delete x$tool
++#remote_file host delete x$tool
+ 
+ gdb_start
+-set file [remote_download host $GDB_FULLPATH x$tool]
+-set result [test_with_self $file];
++#set file [remote_download host $GDB_FULLPATH x$tool]
++set result [test_with_self $GDB_FULLPATH];
+ gdb_exit;
+-catch "remote_file host delete $file";
++#catch "remote_file host delete $file";
+ 
+ if {$result <0} then {
+     warning "Couldn't test self"
+--- gdb-6.3/gdb/testsuite/gdb.gdb/xfullpath.exp.fix	Mon Jan 10 19:21:40 2005
++++ gdb-6.3/gdb/testsuite/gdb.gdb/xfullpath.exp	Mon Jan 10 19:24:38 2005
+@@ -181,13 +181,13 @@ proc find_gdb { arg } {
+ set GDB_FULLPATH [find_gdb $GDB]
+ 
+ # Remove any old copy lying around.
+-remote_file host delete x$tool
++#remote_file host delete x$tool
+ 
+ gdb_start
+-set file [remote_download host $GDB_FULLPATH x$tool]
+-set result [test_with_self $file];
++#set file [remote_download host $GDB_FULLPATH x$tool]
++set result [test_with_self $GDB_FULLPATH];
+ gdb_exit;
+-catch "remote_file host delete $file";
++#catch "remote_file host delete $file";
+ 
+ if {$result <0} then {
+     warning "Couldn't test self"

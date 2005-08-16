@@ -1,0 +1,28 @@
+--- /dev/null	2004-12-02 09:02:32.308608576 -0500
++++ ./gdb/doc/ChangeLog.RedHat	2004-12-02 10:25:01.938353424 -0500
+@@ -0,0 +1,11 @@
++2004-12-02  Andrew Cagney  <cagney@redhat.com>
++
++	* New file.
++
++
++Local Variables:
++mode: change-log
++left-margin: 8
++fill-column: 74
++version-control: never
++End:
+--- /dev/null	2004-12-02 09:02:32.308608576 -0500
++++ ./gdb/ChangeLog.RedHat	2004-12-02 10:45:45.430313912 -0500
+@@ -0,0 +1,11 @@
++2004-12-02  Andrew Cagney  <cagney@redhat.com>
++
++	* New file.
++
++
++Local Variables:
++mode: change-log
++left-margin: 8
++fill-column: 74
++version-control: never
++End:

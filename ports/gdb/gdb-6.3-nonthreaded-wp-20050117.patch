@@ -1,0 +1,134 @@
+--- gdb-6.3/gdb/doc/observer.texi.fix	Tue Jan 18 16:51:56 2005
++++ gdb-6.3/gdb/doc/observer.texi	Tue Jan 18 17:38:57 2005
+@@ -91,6 +91,10 @@ at the entry-point instruction.  For @sa
+ inferior, and before any information on the inferior has been printed.
+ @end deftypefun
+ 
++@deftypefun void mourn_inferior (struct target_ops *@var{target})
++@value{GDBN} has just detached from an inferior.
++@end deftypefun
++
+ @deftypefun void solib_unloaded (struct so_list *@var{solib})
+ The specified shared library has been discovered to be unloaded.
+ @end deftypefun
+--- gdb-6.3/gdb/linux-nat.c.fix	Tue Jan 18 16:52:24 2005
++++ gdb-6.3/gdb/linux-nat.c	Tue Jan 18 17:14:01 2005
+@@ -1,6 +1,6 @@
+ /* GNU/Linux native-dependent code common to multiple platforms.
+ 
+-   Copyright 2001, 2002, 2003, 2004 Free Software Foundation, Inc.
++   Copyright 2001, 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+ 
+    This file is part of GDB.
+ 
+@@ -802,11 +802,23 @@ iterate_over_lwps (int (*callback) (stru
+ {
+   struct lwp_info *lp, *lpnext;
+ 
+-  for (lp = lwp_list; lp; lp = lpnext)
++  if (lwp_list != NULL)
+     {
+-      lpnext = lp->next;
++      for (lp = lwp_list; lp; lp = lpnext)
++        {
++          lpnext = lp->next;
++          if ((*callback) (lp, data))
++	    return lp;
++        }
++    }
++  else
++    {
++      /* We are calling iterate_over_lwps for a non-threaded program.
++         Initialize the lwp list to the inferior's ptid.  */
++      lp = add_lwp (BUILD_LWP (GET_PID (inferior_ptid),
++			       GET_PID (inferior_ptid)));
+       if ((*callback) (lp, data))
+-	return lp;
++        return lp;
+     }
+ 
+   return NULL;
+@@ -3103,6 +3115,18 @@ linux_proc_pending_signals (int pid, sig
+   fclose (procfile);
+ }
+ 
++/* Observer function for a mourn inferior event.  This is needed
++   because if iterate_over_lwps is called for a non-threaded program
++   to handle watchpoints, the lwp list gets initialized but there is
++   no corresponding clean-up when the inferior is detached.  In
++   a threaded program, the observer is simply redundant as the
++   same clean-up gets done in linux_nat_mourn_inferior.  */
++static void
++linux_nat_mourn_inferior_observer (struct target_ops *objfile)
++{
++  init_lwp_list ();
++}
++
+ void
+ _initialize_linux_nat (void)
+ {
+@@ -3120,7 +3144,9 @@ Specify any of the following keywords fo
+   stat     -- list a bunch of random process info.\n\
+   status   -- list a different bunch of random process info.\n\
+   all      -- list all available /proc info.");
+-
++  
++  observer_attach_mourn_inferior (linux_nat_mourn_inferior_observer);
++  
+   init_linux_nat_ops ();
+   add_target (&linux_nat_ops);
+   thread_db_init (&linux_nat_ops);
+--- gdb-6.3/gdb/target.c.fix	Tue Jan 18 17:02:37 2005
++++ gdb-6.3/gdb/target.c	Tue Jan 18 17:39:43 2005
+@@ -1,7 +1,7 @@
+ /* Select target systems and architectures at runtime for GDB.
+ 
+    Copyright 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998,
+-   1999, 2000, 2001, 2002, 2003, 2004 Free Software Foundation, Inc.
++   1999, 2000, 2001, 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+ 
+    Contributed by Cygnus Support.
+ 
+@@ -38,6 +38,7 @@
+ #include "regcache.h"
+ #include "gdb_assert.h"
+ #include "gdbcore.h"
++#include "observer.h"
+ 
+ static void target_info (char *, int);
+ 
+@@ -266,6 +267,13 @@ target_load (char *arg, int from_tty)
+   (*current_target.to_load) (arg, from_tty);
+ }
+ 
++void
++target_mourn_inferior (void)
++{
++  (*current_target.to_mourn_inferior) ();
++  observer_notify_mourn_inferior (&current_target);
++}
++
+ static int
+ nomemory (CORE_ADDR memaddr, char *myaddr, int len, int write,
+ 	  struct target_ops *t)
+--- gdb-6.3/gdb/target.h.fix	Tue Jan 18 17:02:42 2005
++++ gdb-6.3/gdb/target.h	Tue Jan 18 17:15:30 2005
+@@ -1,7 +1,7 @@
+ /* Interface between GDB and target environments, including files and processes
+ 
+    Copyright 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998,
+-   1999, 2000, 2001, 2002, 2003, 2004 Free Software Foundation, Inc.
++   1999, 2000, 2001, 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+ 
+    Contributed by Cygnus Support.  Written by John Gilmore.
+ 
+@@ -779,8 +779,7 @@ extern void target_load (char *arg, int 
+ 
+ /* The inferior process has died.  Do what is right.  */
+ 
+-#define	target_mourn_inferior()	\
+-     (*current_target.to_mourn_inferior) ()
++extern void target_mourn_inferior (void);
+ 
+ /* Does target have enough data to do a run or attach command? */
+ 

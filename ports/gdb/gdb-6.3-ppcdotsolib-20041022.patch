@@ -1,0 +1,66 @@
+2004-10-22  Andrew Cagney  <cagney@gnu.org>
+ 
+ 	* solib-svr4.c (enable_break): Convert a symbol descriptor into
+ 	the corresponding function entry point.
+ 	(solib_break_names): Delete "._dl_debug_state", no longer needed.
+ 	
+*** ./gdb/solib-svr4.c.dist	Fri Oct 22 11:50:31 2004
+--- ./gdb/solib-svr4.c	Fri Oct 22 11:53:19 2004
+***************
+*** 86,102 ****
+    "_dl_debug_state",
+    "rtld_db_dlactivity",
+    "_rtld_debug_state",
+- 
+-   /* On the 64-bit PowerPC, the linker symbol with the same name as
+-      the C function points to a function descriptor, not to the entry
+-      point.  The linker symbol whose name is the C function name
+-      prefixed with a '.' points to the function's entry point.  So
+-      when we look through this table, we ignore symbols that point
+-      into the data section (thus skipping the descriptor's symbol),
+-      and eventually try this one, giving us the real entry point
+-      address.  */
+-   "._dl_debug_state",
+- 
+    NULL
+  };
+  
+--- 86,91 ----
+***************
+*** 1284,1301 ****
+        /* Now try to set a breakpoint in the dynamic linker.  */
+        for (bkpt_namep = solib_break_names; *bkpt_namep != NULL; bkpt_namep++)
+  	{
+!           /* On ABI's that use function descriptors, there are usually
+!              two linker symbols associated with each C function: one
+!              pointing at the actual entry point of the machine code,
+!              and one pointing at the function's descriptor.  The
+!              latter symbol has the same name as the C function.
+! 
+!              What we're looking for here is the machine code entry
+!              point, so we are only interested in symbols in code
+!              sections.  */
+! 	  sym_addr = bfd_lookup_symbol (tmp_bfd, *bkpt_namep, SEC_CODE);
+  	  if (sym_addr != 0)
+! 	    break;
+  	}
+  
+        /* We're done with both the temporary bfd and target.  Remember,
+--- 1273,1289 ----
+        /* Now try to set a breakpoint in the dynamic linker.  */
+        for (bkpt_namep = solib_break_names; *bkpt_namep != NULL; bkpt_namep++)
+  	{
+! 	  sym_addr = bfd_lookup_symbol (tmp_bfd, *bkpt_namep, 0);
+  	  if (sym_addr != 0)
+! 	    {
+! 	      /* The symbol might be a descriptor, convert to into the
+! 		 corresponding code address.  */
+! 	      sym_addr = gdbarch_convert_from_func_ptr_addr (current_gdbarch,
+! 							     sym_addr,
+! 							     tmp_bfd_target);
+! 	      if (sym_addr != 0)
+! 		break;
+! 	    }
+  	}
+  
+        /* We're done with both the temporary bfd and target.  Remember,

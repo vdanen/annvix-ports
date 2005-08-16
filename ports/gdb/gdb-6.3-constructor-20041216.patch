@@ -1,0 +1,44 @@
+2004-12-16  Jeff Johnston  <jjohnstn@redhat.com>
+
+	* cp-demangle.c (d_print_comp): Add support for exposing
+	not-in-charge constructors/destructors in the demangled
+	names.
+
+--- gdb-6.3/libiberty/cp-demangle.c.fix	Thu Dec 16 16:39:09 2004
++++ gdb-6.3/libiberty/cp-demangle.c	Thu Dec 16 16:39:37 2004
+@@ -2978,11 +2978,35 @@ d_print_comp (dpi, dc)
+ 
+     case DEMANGLE_COMPONENT_CTOR:
+       d_print_comp (dpi, dc->u.s_ctor.name);
++      switch (dc->u.s_ctor.kind)
++	{
++	case gnu_v3_complete_object_ctor:
++	  /* no decoration */
++	  break;
++	case gnu_v3_base_object_ctor:
++	  d_append_string_constant (dpi, "$base");
++	  break;
++	case gnu_v3_complete_object_allocating_ctor:
++	  d_append_string_constant (dpi, "$allocate");
++	  break;
++	}
+       return;
+ 
+     case DEMANGLE_COMPONENT_DTOR:
+       d_append_char (dpi, '~');
+       d_print_comp (dpi, dc->u.s_dtor.name);
++      switch (dc->u.s_dtor.kind)
++	{
++	case gnu_v3_deleting_dtor:
++	  d_append_string_constant (dpi, "$delete");
++	  break;
++	case gnu_v3_complete_object_dtor:
++	  /* no decoration */
++	  break;
++	case gnu_v3_base_object_dtor:
++	  d_append_string_constant (dpi, "$base");
++	  break;
++	}
+       return;
+ 
+     case DEMANGLE_COMPONENT_VTABLE:

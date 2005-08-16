@@ -1,0 +1,2263 @@
+2004-12-13  Jeff Johnston  <jjohnstn@redhat.com>
+
+        * linux-nat.c: Add latest vfork fixes. 
+	(stop_wait_callback, linux-nat-wait): Notify observers of a sigtrap.
+	(delete_lwp): Free the saved_trap_data if present.
+	* linux-nat.h (struct lwp_info): Add saved_trap_data field.
+	(struct linux_watchpoint): New struct.
+	* thread-db.c: Add support to always keep lwp info in ptids.
+	(attach_thread): Notify observers of a linux
+	new thread.
+	(thread_db_wait): Call check_event if SIGILL occurs.
+	* infrun.c: Add debug statement support.
+	(handle_inferior_event): For platforms that
+	hit watchpoints prior to the data write, mark the watchpoints
+	so we know to check them after we step through the write.
+	k
+	* breakpoint.c (bpstat_stop_status): Fix up watchpoint code.
+	(insert_watchpoints_for_new_thread): New function.
+	(mark_triggered_watchpoints): Ditto.
+	* breakpoint.h (insert_watchpoints_for_new_thread): New prototype.
+	(mark_triggered_watchpoints): Ditto.
+	* i386-linux-nat.c (i386_linux_dr_get, i386_linux_dr_set): Use
+	TIDGET to get PTRACE lpw, otherwise fall back to PIDGET.
+	* amd64-linux-nat.c (amd64_linux_dr_get, amd64_linux_dr_set): Ditto.
+	* ia64-linux-nat.c: Add support for removing and inserting watchpoints
+	on all threads.
+	* s390-nat.c: Ditto.
+	* Makefile.in: Add observer.h and linux-nat.h to ia64-linux-nat.o
+	and s390-nat.o.
+	* gdbarch.sh (single_step_through_delay): New directive.
+	* gdbarch.h: Regenerated.
+	* gdbarch.c: Ditto.
+	* doc/observer.texi: Add two new observers for linux_new_thread
+	and sigtrap.
+
+--- gdb-6.3/gdb/doc/observer.texi.fix	Fri Jan  7 16:59:57 2005
++++ gdb-6.3/gdb/doc/observer.texi	Fri Jan  7 17:04:07 2005
+@@ -95,3 +95,14 @@ inferior, and before any information on 
+ The specified shared library has been discovered to be unloaded.
+ @end deftypefun
+ 
++@deftypefun void linux_new_thread (ptid_t @var{ptid})
++A new linux thread described by @var{ptid} has been officially attached
++to by gdb.
++@end deftypefun
++
++@deftypefun void sigtrap (void * @var{data})
++A low-level SIGTRAP has been discovered.  This notification can be used to save
++additional state necessary if the trap is deferred for later handling.
++@end deftypefun
++
++
+--- gdb-6.3/gdb/infrun.c.fix	Fri Jan  7 16:55:54 2005
++++ gdb-6.3/gdb/infrun.c	Fri Jan  7 17:04:37 2005
+@@ -106,6 +106,8 @@ static ptid_t previous_inferior_ptid;
+ 
+ static int may_follow_exec = MAY_FOLLOW_EXEC;
+ 
++static int debug_infrun = 0;
++
+ /* If the program uses ELF-style shared libraries, then calls to
+    functions in shared libraries go through stubs, which live in a
+    table called the PLT (Procedure Linkage Table).  The first time the
+@@ -161,16 +163,6 @@ static int may_follow_exec = MAY_FOLLOW_
+ #define SOLIB_IN_DYNAMIC_LINKER(pid,pc) 0
+ #endif
+ 
+-/* On some systems, the PC may be left pointing at an instruction that  won't
+-   actually be executed.  This is usually indicated by a bit in the PSW.  If
+-   we find ourselves in such a state, then we step the target beyond the
+-   nullified instruction before returning control to the user so as to avoid
+-   confusion. */
+-
+-#ifndef INSTRUCTION_NULLIFIED
+-#define INSTRUCTION_NULLIFIED 0
+-#endif
+-
+ /* We can't step off a permanent breakpoint in the ordinary way, because we
+    can't remove it.  Instead, we have to advance the PC to the next
+    instruction.  This macro should expand to a pointer to a function that
+@@ -517,6 +509,9 @@ resume (int step, enum target_signal sig
+   struct cleanup *old_cleanups = make_cleanup (resume_cleanups, 0);
+   QUIT;
+ 
++  if (debug_infrun)
++    printf_unfiltered ("infrun: resume (step=%d, signal=%d)\n", step, sig);
++
+   /* FIXME: calling breakpoint_here_p (read_pc ()) three times! */
+ 
+ 
+@@ -714,24 +709,17 @@ proceed (CORE_ADDR addr, enum target_sig
+ 
+   if (addr == (CORE_ADDR) -1)
+     {
+-      /* If there is a breakpoint at the address we will resume at,
+-         step one instruction before inserting breakpoints
+-         so that we do not stop right away (and report a second
+-         hit at this breakpoint).  */
+-
+       if (read_pc () == stop_pc && breakpoint_here_p (read_pc ()))
++	/* There is a breakpoint at the address we will resume at,
++	   step one instruction before inserting breakpoints so that
++	   we do not stop right away (and report a second hit at this
++	   breakpoint).  */
+ 	oneproc = 1;
+-
+-#ifndef STEP_SKIPS_DELAY
+-#define STEP_SKIPS_DELAY(pc) (0)
+-#define STEP_SKIPS_DELAY_P (0)
+-#endif
+-      /* Check breakpoint_here_p first, because breakpoint_here_p is fast
+-         (it just checks internal GDB data structures) and STEP_SKIPS_DELAY
+-         is slow (it needs to read memory from the target).  */
+-      if (STEP_SKIPS_DELAY_P
+-	  && breakpoint_here_p (read_pc () + 4)
+-	  && STEP_SKIPS_DELAY (read_pc ()))
++      else if (gdbarch_single_step_through_delay_p (current_gdbarch)
++              && gdbarch_single_step_through_delay (current_gdbarch,
++                                                    get_current_frame ()))
++	/* We stepped onto an instruction that needs to be stepped
++	   again before re-inserting the breakpoint, do so.  */
+ 	oneproc = 1;
+     }
+   else
+@@ -739,6 +727,10 @@ proceed (CORE_ADDR addr, enum target_sig
+       write_pc (addr);
+     }
+ 
++  if (debug_infrun)
++    printf_unfiltered ("infrun: proceed (addr=0x%s, signal=%d, step=%d)\n",
++		       paddr_nz (addr), siggnal, step);
++
+   /* In a multi-threaded task we may select another thread
+      and then continue or step.
+ 
+@@ -878,7 +870,6 @@ enum infwait_states
+ {
+   infwait_normal_state,
+   infwait_thread_hop_state,
+-  infwait_nullified_state,
+   infwait_nonstep_watch_state
+ };
+ 
+@@ -957,6 +948,9 @@ wait_for_inferior (void)
+   struct execution_control_state ecss;
+   struct execution_control_state *ecs;
+ 
++  if (debug_infrun)
++    printf_unfiltered ("infrun: wait_for_inferior\n");
++
+   old_cleanups = make_cleanup (delete_step_resume_breakpoint,
+ 			       &step_resume_breakpoint);
+ 
+@@ -1241,6 +1235,8 @@ handle_inferior_event (struct execution_
+   switch (ecs->infwait_state)
+     {
+     case infwait_thread_hop_state:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: infwait_thread_hop_state\n");
+       /* Cancel the waiton_ptid. */
+       ecs->waiton_ptid = pid_to_ptid (-1);
+       /* See comments where a TARGET_WAITKIND_SYSCALL_RETURN event
+@@ -1254,6 +1250,8 @@ handle_inferior_event (struct execution_
+       break;
+ 
+     case infwait_normal_state:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: infwait_normal_state\n");
+       /* See comments where a TARGET_WAITKIND_SYSCALL_RETURN event
+          is serviced in this loop, below. */
+       if (ecs->enable_hw_watchpoints_after_wait)
+@@ -1264,11 +1262,9 @@ handle_inferior_event (struct execution_
+       stepped_after_stopped_by_watchpoint = 0;
+       break;
+ 
+-    case infwait_nullified_state:
+-      stepped_after_stopped_by_watchpoint = 0;
+-      break;
+-
+     case infwait_nonstep_watch_state:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: infwait_nonstep_watch_state\n");
+       insert_breakpoints ();
+ 
+       /* FIXME-maybe: is this cleaner than setting a flag?  Does it
+@@ -1303,6 +1299,8 @@ handle_inferior_event (struct execution_
+   switch (ecs->ws.kind)
+     {
+     case TARGET_WAITKIND_LOADED:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_LOADED\n");
+       /* Ignore gracefully during startup of the inferior, as it
+          might be the shell which has just loaded some objects,
+          otherwise add the symbols for the newly loaded objects.  */
+@@ -1347,11 +1345,15 @@ handle_inferior_event (struct execution_
+       return;
+ 
+     case TARGET_WAITKIND_SPURIOUS:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_SPURIOUS\n");
+       resume (0, TARGET_SIGNAL_0);
+       prepare_to_wait (ecs);
+       return;
+ 
+     case TARGET_WAITKIND_EXITED:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_EXITED\n");
+       target_terminal_ours ();	/* Must do this before mourn anyway */
+       print_stop_reason (EXITED, ecs->ws.value.integer);
+ 
+@@ -1368,6 +1370,8 @@ handle_inferior_event (struct execution_
+       return;
+ 
+     case TARGET_WAITKIND_SIGNALLED:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_SIGNALLED\n");
+       stop_print_frame = 0;
+       stop_signal = ecs->ws.value.sig;
+       target_terminal_ours ();	/* Must do this before mourn anyway */
+@@ -1388,6 +1392,8 @@ handle_inferior_event (struct execution_
+          the above cases end in a continue or goto. */
+     case TARGET_WAITKIND_FORKED:
+     case TARGET_WAITKIND_VFORKED:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_FORKED\n");
+       stop_signal = TARGET_SIGNAL_TRAP;
+       pending_follow.kind = ecs->ws.kind;
+ 
+@@ -1410,6 +1416,8 @@ handle_inferior_event (struct execution_
+       goto process_event_stop_test;
+ 
+     case TARGET_WAITKIND_EXECD:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_EXECED\n");
+       stop_signal = TARGET_SIGNAL_TRAP;
+ 
+       /* NOTE drow/2002-12-05: This code should be pushed down into the
+@@ -1477,6 +1485,8 @@ handle_inferior_event (struct execution_
+          Also, be careful not to try to gather much state about a thread
+          that's in a syscall.  It's frequently a losing proposition. */
+     case TARGET_WAITKIND_SYSCALL_ENTRY:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_SYSCALL_ENTRY\n");
+       number_of_threads_in_syscalls++;
+       if (number_of_threads_in_syscalls == 1)
+ 	{
+@@ -1501,6 +1511,8 @@ handle_inferior_event (struct execution_
+          here, which will be serviced immediately after the target
+          is waited on. */
+     case TARGET_WAITKIND_SYSCALL_RETURN:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_SYSCALL_RETURN\n");
+       target_resume (ecs->ptid, 1, TARGET_SIGNAL_0);
+ 
+       if (number_of_threads_in_syscalls > 0)
+@@ -1513,6 +1525,8 @@ handle_inferior_event (struct execution_
+       return;
+ 
+     case TARGET_WAITKIND_STOPPED:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_STOPPED\n");
+       stop_signal = ecs->ws.value.sig;
+       break;
+ 
+@@ -1526,6 +1540,8 @@ handle_inferior_event (struct execution_
+          circumstance is any event which the lower level knows will be
+          reported multiple times without an intervening resume.  */
+     case TARGET_WAITKIND_IGNORE:
++      if (debug_infrun)
++        printf_unfiltered ("infrun: TARGET_WAITKIND_IGNORE\n");
+       prepare_to_wait (ecs);
+       return;
+     }
+@@ -1546,6 +1562,9 @@ handle_inferior_event (struct execution_
+ 
+   stop_pc = read_pc_pid (ecs->ptid);
+ 
++  if (debug_infrun)
++    printf_unfiltered ("infrun: stop_pc = 0x%s\n", paddr_nz (stop_pc));
++
+   if (stepping_past_singlestep_breakpoint)
+     {
+       gdb_assert (SOFTWARE_SINGLE_STEP_P ()
+@@ -1560,6 +1579,8 @@ handle_inferior_event (struct execution_
+          we could tell, but we can't reliably.  */
+       if (stop_signal == TARGET_SIGNAL_TRAP)
+ 	{
++	  if (debug_infrun)
++	    printf_unfiltered ("infrun: stepping_past_singlestep_breakpoint\n");
+ 	  /* Pull the single step breakpoints out of the target.  */
+ 	  SOFTWARE_SINGLE_STEP (0, 0);
+ 	  singlestep_breakpoints_inserted_p = 0;
+@@ -1616,6 +1637,9 @@ handle_inferior_event (struct execution_
+ 	{
+ 	  int remove_status;
+ 
++	  if (debug_infrun)
++	    printf_unfiltered ("infrun: thread_hop_needed\n");
++
+ 	  /* Saw a breakpoint, but it was hit by the wrong thread.
+ 	     Just continue. */
+ 
+@@ -1681,6 +1705,9 @@ handle_inferior_event (struct execution_
+      so, then switch to that thread.  */
+   if (!ptid_equal (ecs->ptid, inferior_ptid))
+     {
++      if (debug_infrun)
++	printf_unfiltered ("infrun: context switch\n");
++
+       context_switch (ecs);
+ 
+       if (deprecated_context_hook)
+@@ -1696,33 +1723,24 @@ handle_inferior_event (struct execution_
+       singlestep_breakpoints_inserted_p = 0;
+     }
+ 
+-  /* If PC is pointing at a nullified instruction, then step beyond
+-     it so that the user won't be confused when GDB appears to be ready
+-     to execute it. */
+-
+-  /*      if (INSTRUCTION_NULLIFIED && currently_stepping (ecs)) */
+-  if (INSTRUCTION_NULLIFIED)
+-    {
+-      registers_changed ();
+-      target_resume (ecs->ptid, 1, TARGET_SIGNAL_0);
+-
+-      /* We may have received a signal that we want to pass to
+-         the inferior; therefore, we must not clobber the waitstatus
+-         in WS. */
+-
+-      ecs->infwait_state = infwait_nullified_state;
+-      ecs->waiton_ptid = ecs->ptid;
+-      ecs->wp = &(ecs->tmpstatus);
+-      prepare_to_wait (ecs);
+-      return;
+-    }
+-
+   /* It may not be necessary to disable the watchpoint to stop over
+      it.  For example, the PA can (with some kernel cooperation)
+      single step over a watchpoint without disabling the watchpoint.  */
+   if (HAVE_STEPPABLE_WATCHPOINT && STOPPED_BY_WATCHPOINT (ecs->ws))
+     {
+-      resume (1, 0);
++      CORE_ADDR addr = 0;
++
++      if (debug_infrun)
++	printf_unfiltered ("infrun: STOPPED_BY_WATCHPOINT\n");
++
++      target_stopped_data_address (&current_target, &addr);
++      mark_triggered_watchpoints (addr);
++      registers_changed ();
++      target_resume (ecs->ptid, 1, TARGET_SIGNAL_0);	/* Single step */
++
++      ecs->waiton_ptid = ecs->ptid;
++      ecs->wp = &(ecs->ws);
++      ecs->infwait_state = infwait_nonstep_watch_state;
+       prepare_to_wait (ecs);
+       return;
+     }
+@@ -1732,6 +1750,8 @@ handle_inferior_event (struct execution_
+      register or page protection watchpoint scheme need here?  */
+   if (HAVE_NONSTEPPABLE_WATCHPOINT && STOPPED_BY_WATCHPOINT (ecs->ws))
+     {
++      CORE_ADDR addr = 0;
++
+       /* At this point, we are stopped at an instruction which has
+          attempted to write to a piece of memory under control of
+          a watchpoint.  The instruction hasn't actually executed
+@@ -1739,15 +1759,15 @@ handle_inferior_event (struct execution_
+          now, we would get the old value, and therefore no change
+          would seem to have occurred.
+ 
+-         In order to make watchpoints work `right', we really need
+-         to complete the memory write, and then evaluate the
+-         watchpoint expression.  The following code does that by
+-         removing the watchpoint (actually, all watchpoints and
+-         breakpoints), single-stepping the target, re-inserting
+-         watchpoints, and then falling through to let normal
+-         single-step processing handle proceed.  Since this
+-         includes evaluating watchpoints, things will come to a
+-         stop in the correct manner.  */
++         In order to make watchpoints work `right', we mark the
++	 triggered watchpoints so that after we single step,
++	 we will check for a value change.  */
++
++      if (debug_infrun)
++	printf_unfiltered ("infrun: STOPPED_BY_WATCHPOINT\n");
++
++      target_stopped_data_address (&current_target, &addr);
++      mark_triggered_watchpoints (addr);
+ 
+       remove_breakpoints ();
+       registers_changed ();
+@@ -1781,6 +1801,41 @@ handle_inferior_event (struct execution_
+   stopped_by_random_signal = 0;
+   breakpoints_failed = 0;
+ 
++  if (stop_signal == TARGET_SIGNAL_TRAP
++      && trap_expected
++      && gdbarch_single_step_through_delay_p (current_gdbarch)
++      && currently_stepping (ecs))
++    {
++      /* We're trying to step of a breakpoint.  Turns out that we're
++	 also on an instruction that needs to be stepped multiple
++	 times before it's been fully executing. E.g., architectures
++	 with a delay slot.  It needs to be stepped twice, once for
++	 the instruction and once for the delay slot.  */
++      int step_through_delay
++	= gdbarch_single_step_through_delay (current_gdbarch,
++					     get_current_frame ());
++      if (debug_infrun && step_through_delay)
++	printf_unfiltered ("infrun: step through delay\n");
++      if (step_range_end == 0 && step_through_delay)
++	{
++	  /* The user issued a continue when stopped at a breakpoint.
++	     Set up for another trap and get out of here.  */
++         ecs->another_trap = 1;
++         keep_going (ecs);
++         return;
++	}
++      else if (step_through_delay)
++	{
++	  /* The user issued a step when stopped at a breakpoint.
++	     Maybe we should stop, maybe we should not - the delay
++	     slot *might* correspond to a line of source.  In any
++	     case, don't decide that here, just set ecs->another_trap,
++	     making sure we single-step again before breakpoints are
++	     re-inserted.  */
++	  ecs->another_trap = 1;
++	}
++    }
++
+   /* Look at the cause of the stop, and decide what to do.
+      The alternatives are:
+      1) break; to really stop and return to the debugger,
+@@ -1809,6 +1864,8 @@ handle_inferior_event (struct execution_
+     {
+       if (stop_signal == TARGET_SIGNAL_TRAP && stop_after_trap)
+ 	{
++          if (debug_infrun)
++	    printf_unfiltered ("infrun: stopped\n");
+ 	  stop_print_frame = 0;
+ 	  stop_stepping (ecs);
+ 	  return;
+@@ -1818,6 +1875,8 @@ handle_inferior_event (struct execution_
+          shared libraries hook functions.  */
+       if (stop_soon == STOP_QUIETLY)
+ 	{
++          if (debug_infrun)
++	    printf_unfiltered ("infrun: quietly stopped\n");
+ 	  stop_stepping (ecs);
+ 	  return;
+ 	}
+@@ -1837,7 +1896,11 @@ handle_inferior_event (struct execution_
+       /* Don't even think about breakpoints if just proceeded over a
+          breakpoint.  */
+       if (stop_signal == TARGET_SIGNAL_TRAP && trap_expected)
+-	bpstat_clear (&stop_bpstat);
++	{
++          if (debug_infrun)
++	    printf_unfiltered ("infrun: trap expected\n");
++	  bpstat_clear (&stop_bpstat);
++	}
+       else
+ 	{
+ 	  /* See if there is a breakpoint at the current PC.  */
+@@ -1898,6 +1961,9 @@ process_event_stop_test:
+       /* Signal not for debugging purposes.  */
+       int printed = 0;
+ 
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: random signal %d\n", stop_signal);
++
+       stopped_by_random_signal = 1;
+ 
+       if (signal_print[stop_signal])
+@@ -1977,6 +2043,8 @@ process_event_stop_test:
+ 	/* If we hit the breakpoint at longjmp, disable it for the
+ 	   duration of this command.  Then, install a temporary
+ 	   breakpoint at the target of the jmp_buf. */
++        if (debug_infrun)
++	  printf_unfiltered ("infrun: BPSTATE_WHAT_SET_LONGJMP_RESUME\n");
+ 	disable_longjmp_breakpoint ();
+ 	remove_breakpoints ();
+ 	breakpoints_inserted = 0;
+@@ -2000,6 +2068,8 @@ process_event_stop_test:
+ 
+       case BPSTAT_WHAT_CLEAR_LONGJMP_RESUME:
+       case BPSTAT_WHAT_CLEAR_LONGJMP_RESUME_SINGLE:
++        if (debug_infrun)
++	  printf_unfiltered ("infrun: BPSTATE_WHAT_CLEAR_LONGJMP_RESUME\n");
+ 	remove_breakpoints ();
+ 	breakpoints_inserted = 0;
+ 	disable_longjmp_breakpoint ();
+@@ -2009,6 +2079,8 @@ process_event_stop_test:
+ 	/* else fallthrough */
+ 
+       case BPSTAT_WHAT_SINGLE:
++        if (debug_infrun)
++	  printf_unfiltered ("infrun: BPSTATE_WHAT_SINGLE\n");
+ 	if (breakpoints_inserted)
+ 	  {
+ 	    remove_breakpoints ();
+@@ -2020,6 +2092,8 @@ process_event_stop_test:
+ 	break;
+ 
+       case BPSTAT_WHAT_STOP_NOISY:
++        if (debug_infrun)
++	  printf_unfiltered ("infrun: BPSTATE_WHAT_STOP_NOISY\n");
+ 	stop_print_frame = 1;
+ 
+ 	/* We are about to nuke the step_resume_breakpointt via the
+@@ -2029,6 +2103,8 @@ process_event_stop_test:
+ 	return;
+ 
+       case BPSTAT_WHAT_STOP_SILENT:
++        if (debug_infrun)
++	  printf_unfiltered ("infrun: BPSTATE_WHAT_STOP_SILENT\n");
+ 	stop_print_frame = 0;
+ 
+ 	/* We are about to nuke the step_resume_breakpoin via the
+@@ -2055,6 +2131,9 @@ process_event_stop_test:
+ 	   step-resume bp, but it makes no effort to ensure that
+ 	   the one deleted is the one currently stopped at.  MVS  */
+ 
++        if (debug_infrun)
++	  printf_unfiltered ("infrun: BPSTATE_WHAT_STEP_RESUME\n");
++
+ 	if (step_resume_breakpoint == NULL)
+ 	  {
+ 	    step_resume_breakpoint =
+@@ -2076,6 +2155,8 @@ process_event_stop_test:
+ 	break;
+ 
+       case BPSTAT_WHAT_THROUGH_SIGTRAMP:
++        if (debug_infrun)
++	  printf_unfiltered ("infrun: BPSTATE_WHAT_THROUGH_SIGTRAMP\n");
+ 	/* If were waiting for a trap, hitting the step_resume_break
+ 	   doesn't count as getting it.  */
+ 	if (trap_expected)
+@@ -2086,6 +2167,8 @@ process_event_stop_test:
+       case BPSTAT_WHAT_CHECK_SHLIBS_RESUME_FROM_HOOK:
+ #ifdef SOLIB_ADD
+ 	{
++          if (debug_infrun)
++	    printf_unfiltered ("infrun: BPSTATE_WHAT_CHECK_SHLIBS\n");
+ 	  /* Remove breakpoints, we eventually want to step over the
+ 	     shlib event breakpoint, and SOLIB_ADD might adjust
+ 	     breakpoint addresses via breakpoint_re_set.  */
+@@ -2198,11 +2281,15 @@ process_event_stop_test:
+       /* Have we reached our destination?  If not, keep going. */
+       if (SOLIB_IN_DYNAMIC_LINKER (PIDGET (ecs->ptid), stop_pc))
+ 	{
++          if (debug_infrun)
++	    printf_unfiltered ("infrun: stepping in dynamic linker\n");
+ 	  ecs->another_trap = 1;
+ 	  keep_going (ecs);
+ 	  return;
+ 	}
+ #endif
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: step past dynamic linker\n");
+       /* Else, stop and report the catchpoint(s) whose triggering
+          caused us to begin stepping. */
+       ecs->stepping_through_solib_after_catch = 0;
+@@ -2216,6 +2303,9 @@ process_event_stop_test:
+ 
+   if (step_resume_breakpoint)
+     {
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: step-resume breakpoint\n");
++
+       /* Having a step-resume breakpoint overrides anything
+          else having to do with stepping commands until
+          that breakpoint is reached.  */
+@@ -2225,6 +2315,8 @@ process_event_stop_test:
+ 
+   if (step_range_end == 0)
+     {
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: no stepping, continue\n");
+       /* Likewise if we aren't even stepping.  */
+       keep_going (ecs);
+       return;
+@@ -2237,6 +2329,10 @@ process_event_stop_test:
+      within it! */
+   if (stop_pc >= step_range_start && stop_pc < step_range_end)
+     {
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepping inside range [0x%s-0x%s]\n",
++			    paddr_nz (step_range_start),
++			    paddr_nz (step_range_end));
+       keep_going (ecs);
+       return;
+     }
+@@ -2253,6 +2349,9 @@ process_event_stop_test:
+       CORE_ADDR pc_after_resolver =
+ 	gdbarch_skip_solib_resolver (current_gdbarch, stop_pc);
+ 
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepped into dynsym resolve code\n");
++
+       if (pc_after_resolver)
+ 	{
+ 	  /* Set up a step-resume breakpoint at the address
+@@ -2273,6 +2372,8 @@ process_event_stop_test:
+ 	  || step_over_calls == STEP_OVER_ALL)
+       && get_frame_type (get_current_frame ()) == SIGTRAMP_FRAME)
+     {
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepped into signal trampoline\n");
+       /* The inferior, while doing a "step" or "next", has ended up in
+          a signal trampoline (either by a signal being delivered or by
+          the signal handler returning).  Just single-step until the
+@@ -2287,6 +2388,9 @@ process_event_stop_test:
+       /* It's a subroutine call.  */
+       CORE_ADDR real_stop_pc;
+ 
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepped into subroutine\n");
++
+       if ((step_over_calls == STEP_OVER_NONE)
+ 	  || ((step_range_end == 1)
+ 	      && in_prologue (prev_pc, ecs->stop_func_start)))
+@@ -2303,27 +2407,6 @@ process_event_stop_test:
+ 	  return;
+ 	}
+ 
+-#ifdef DEPRECATED_IGNORE_HELPER_CALL
+-      /* On MIPS16, a function that returns a floating point value may
+-         call a library helper function to copy the return value to a
+-         floating point register.  The DEPRECATED_IGNORE_HELPER_CALL
+-         macro returns non-zero if we should ignore (i.e. step over)
+-         this function call.  */
+-      /* FIXME: cagney/2004-07-21: These custom ``ignore frame when
+-         stepping'' function attributes (SIGTRAMP_FRAME,
+-         DEPRECATED_IGNORE_HELPER_CALL, SKIP_TRAMPOLINE_CODE,
+-         skip_language_trampoline frame, et.al.) need to be replaced
+-         with generic attributes bound to the frame's function.  */
+-      if (DEPRECATED_IGNORE_HELPER_CALL (stop_pc))
+-	{
+-	  /* We're doing a "next", set a breakpoint at callee's return
+-	     address (the address at which the caller will
+-	     resume).  */
+-	  insert_step_resume_breakpoint_at_frame (get_prev_frame (get_current_frame ()));
+-	  keep_going (ecs);
+-	  return;
+-	}
+-#endif
+       if (step_over_calls == STEP_OVER_ALL)
+ 	{
+ 	  /* We're doing a "next", set a breakpoint at callee's return
+@@ -2398,6 +2481,9 @@ process_event_stop_test:
+       /* Determine where this trampoline returns.  */
+       CORE_ADDR real_stop_pc = SKIP_TRAMPOLINE_CODE (stop_pc);
+ 
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepped into solib return tramp\n");
++
+       /* Only proceed through if we know where it's going.  */
+       if (real_stop_pc)
+ 	{
+@@ -2426,6 +2512,9 @@ process_event_stop_test:
+   if (step_over_calls == STEP_OVER_UNDEBUGGABLE
+       && ecs->stop_func_name == NULL)
+     {
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepped into undebuggable function\n");
++
+       /* The inferior just stepped into, or returned to, an
+          undebuggable function (where there is no symbol, not even a
+          minimal symbol, corresponding to the address where the
+@@ -2456,6 +2545,8 @@ process_event_stop_test:
+     {
+       /* It is stepi or nexti.  We always want to stop stepping after
+          one instruction.  */
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepi/nexti\n");
+       stop_step = 1;
+       print_stop_reason (END_STEPPING_RANGE, 0);
+       stop_stepping (ecs);
+@@ -2470,6 +2561,8 @@ process_event_stop_test:
+          stepping (does this always happen right after one instruction,
+          when we do "s" in a function with no line numbers,
+          or can this happen as a result of a return or longjmp?).  */
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: no line number info\n");
+       stop_step = 1;
+       print_stop_reason (END_STEPPING_RANGE, 0);
+       stop_stepping (ecs);
+@@ -2484,6 +2577,8 @@ process_event_stop_test:
+          we don't stop if we step into the middle of a different line.
+          That is said to make things like for (;;) statements work
+          better.  */
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepped to a different line\n");
+       stop_step = 1;
+       print_stop_reason (END_STEPPING_RANGE, 0);
+       stop_stepping (ecs);
+@@ -2504,6 +2599,8 @@ process_event_stop_test:
+          This is particularly necessary for a one-line function,
+          in which after skipping the prologue we better stop even though
+          we will be in mid-line.  */
++      if (debug_infrun)
++	 printf_unfiltered ("infrun: stepped to a different function\n");
+       stop_step = 1;
+       print_stop_reason (END_STEPPING_RANGE, 0);
+       stop_stepping (ecs);
+@@ -2540,6 +2637,8 @@ process_event_stop_test:
+       step_frame_id = current_frame;
+   }
+ 
++  if (debug_infrun)
++     printf_unfiltered ("infrun: keep going\n");
+   keep_going (ecs);
+ }
+ 
+@@ -2676,6 +2775,9 @@ insert_step_resume_breakpoint_at_frame (
+ static void
+ stop_stepping (struct execution_control_state *ecs)
+ {
++  if (debug_infrun)
++    printf_unfiltered ("infrun: stop_stepping\n");
++
+   /* Let callers know we don't want to wait for the inferior anymore.  */
+   ecs->wait_some_more = 0;
+ }
+@@ -2753,6 +2855,8 @@ keep_going (struct execution_control_sta
+ static void
+ prepare_to_wait (struct execution_control_state *ecs)
+ {
++  if (debug_infrun)
++    printf_unfiltered ("infrun: prepare_to_wait\n");
+   if (ecs->infwait_state == infwait_normal_state)
+     {
+       overlay_cache_invalid = 1;
+@@ -3790,6 +3894,10 @@ Pass and Stop may be combined.", NULL));
+ This allows you to set a list of commands to be run each time execution\n\
+ of the program stops.", &cmdlist);
+ 
++  add_set_cmd ("infrun", class_maintenance, var_zinteger,
++		  &debug_infrun, "Set inferior debugging.\n\
++When non-zero, inferior specific debugging is enabled.", &setdebuglist);
++
+   numsigs = (int) TARGET_SIGNAL_LAST;
+   signal_stop = (unsigned char *) xmalloc (sizeof (signal_stop[0]) * numsigs);
+   signal_print = (unsigned char *)
+--- gdb-6.3/gdb/gdbarch.h.fix	Fri Jan  7 17:08:19 2005
++++ gdb-6.3/gdb/gdbarch.h	Fri Jan  7 17:09:12 2005
+@@ -1218,6 +1218,15 @@ extern void set_gdbarch_software_single_
+ #define SOFTWARE_SINGLE_STEP(sig, insert_breakpoints_p) (gdbarch_software_single_step (current_gdbarch, sig, insert_breakpoints_p))
+ #endif
+ 
++/* Return non-zero if the processor is executing a delay slot and a
++ *    further single-step is needed before the instruction finishes. */
++                                                                                
++extern int gdbarch_single_step_through_delay_p (struct gdbarch *gdbarch);
++                                                                                
++typedef int (gdbarch_single_step_through_delay_ftype) (struct gdbarch *gdbarch, struct frame_info *frame);
++extern int gdbarch_single_step_through_delay (struct gdbarch *gdbarch, struct frame_info *frame);
++extern void set_gdbarch_single_step_through_delay (struct gdbarch *gdbarch, gdbarch_single_step_through_delay_ftype *single_step_through_delay);
++                                                                                
+ /* FIXME: cagney/2003-08-28: Need to find a better way of selecting the
+    disassembler.  Perhaps objdump can handle it? */
+ 
+--- gdb-6.3/gdb/breakpoint.c.fix	Fri Jan  7 16:58:12 2005
++++ gdb-6.3/gdb/breakpoint.c	Fri Jan  7 17:04:07 2005
+@@ -86,11 +86,6 @@ static void watch_command (char *, int);
+ 
+ static int can_use_hardware_watchpoint (struct value *);
+ 
+-extern void break_at_finish_command (char *, int);
+-extern void break_at_finish_at_depth_command (char *, int);
+-
+-extern void tbreak_at_finish_command (char *, int);
+-
+ static int break_command_1 (char *, int, int, struct breakpoint *);
+ 
+ static void mention (struct breakpoint *);
+@@ -181,11 +176,6 @@ static void create_fork_vfork_event_catc
+ 						char *cond_string,
+ 						enum bptype bp_kind);
+ 
+-static void break_at_finish_at_depth_command_1 (char *arg,
+-						int flag, int from_tty);
+-
+-static void break_at_finish_command_1 (char *arg, int flag, int from_tty);
+-
+ static void stop_command (char *arg, int from_tty);
+ 
+ static void stopin_command (char *arg, int from_tty);
+@@ -748,6 +738,90 @@ insert_catchpoint (struct ui_out *uo, vo
+   return 0;
+ }
+ 
++/* External function to insert all existing watchpoints on a newly
++   attached thread.  IWPFN is a callback function to perform
++   the target insert watchpoint.  This function is used to support
++   platforms where a watchpoint must be inserted/removed on each
++   individual thread (e.g. ia64-linux and s390-linux).  For
++   ia64 and s390 linux, this function is called via a new thread
++   observer.  */
++int
++insert_watchpoints_for_new_thread (ptid_t new_thread, 
++				   insert_watchpoint_ftype *iwpfn)
++{
++  struct bp_location *b;
++  int val = 0;
++  int return_val = 0;
++  struct ui_file *tmp_error_stream = mem_fileopen ();
++  make_cleanup_ui_file_delete (tmp_error_stream);
++
++  /* Explicitly mark the warning -- this will only be printed if
++     there was an error.  */
++  fprintf_unfiltered (tmp_error_stream, "Warning:\n");
++
++  ALL_BP_LOCATIONS (b)
++    {
++      /* Skip disabled breakpoints.  */
++      if (!breakpoint_enabled (b->owner))
++	continue;
++
++      /* For every active watchpoint, we need to insert the watchpoint on 
++         the new thread.  */
++      if (b->loc_type == bp_loc_hardware_watchpoint)
++	{
++	  struct value *v = b->owner->val_chain;
++
++	  /* Look at each value on the value chain.  */
++	  for (; v; v = v->next)
++	    {
++	      /* If it's a memory location, and GDB actually needed
++		 its contents to evaluate the expression, then we
++		 must watch it.  */
++	      if (VALUE_LVAL (v) == lval_memory
++		  && ! VALUE_LAZY (v))
++		{
++		  struct type *vtype = check_typedef (VALUE_TYPE (v));
++		  
++		  /* We only watch structs and arrays if user asked
++		     for it explicitly, never if they just happen to
++		     appear in the middle of some value chain.  */
++		  if (v == b->owner->val_chain
++		      || (TYPE_CODE (vtype) != TYPE_CODE_STRUCT
++			  && TYPE_CODE (vtype) != TYPE_CODE_ARRAY))
++		    {
++		      CORE_ADDR addr;
++		      int len, type;
++		      
++		      addr = VALUE_ADDRESS (v) + VALUE_OFFSET (v);
++		      len = TYPE_LENGTH (VALUE_TYPE (v));
++		      type = hw_write;
++		      if (b->owner->type == bp_read_watchpoint)
++			type = hw_read;
++		      else if (b->owner->type == bp_access_watchpoint)
++			type = hw_access;
++		      val = (*iwpfn) (new_thread, addr, len, type); 
++		    }
++		}
++	    }
++	}
++
++      if (val)
++	return_val = val;
++    }
++
++  /* Failure to insert a watchpoint on any memory value in the
++     value chain brings us here.  */
++  if (return_val)
++    {
++      fprintf_unfiltered (tmp_error_stream,
++			  "%s\n",
++			  "Could not insert hardware watchpoints on new thread."); 
++      target_terminal_ours_for_output ();
++      error_stream (tmp_error_stream);
++    }
++  return return_val;
++}
++
+ /* Helper routine: free the value chain for a breakpoint (watchpoint).  */
+ 
+ static void free_valchain (struct bp_location *b)
+@@ -1179,6 +1253,7 @@ remove_breakpoints (void)
+ {
+   struct bp_location *b;
+   int val;
++  int return_val = 0;
+ 
+   ALL_BP_LOCATIONS (b)
+   {
+@@ -1186,10 +1261,10 @@ remove_breakpoints (void)
+       {
+ 	val = remove_breakpoint (b, mark_uninserted);
+ 	if (val != 0)
+-	  return val;
++	  return_val = val;
+       }
+   }
+-  return 0;
++  return return_val;
+ }
+ 
+ int
+@@ -2122,8 +2197,13 @@ print_it_typical (bpstat bs)
+       break;
+ 
+     case bp_thread_event:
+-      /* Not sure how we will get here. 
+-	 GDB should not stop for these breakpoints.  */
++      /* We can only get here legitimately if something further on the bs 
++	 list has caused the stop status to be noisy.  A valid example
++	 of this is a new thread event and a software watchpoint have
++	 both occurred.  */
++      if (bs->next)
++        return PRINT_UNKNOWN;
++
+       printf_filtered ("Thread Event Breakpoint: gdb should not stop!\n");
+       return PRINT_NOTHING;
+       break;
+@@ -2560,6 +2640,54 @@ which its expression is valid.\n");     
+     }
+ }
+ 
++/* Check watchpoints for a match with a stopped data address.
++  
++   STOPPED_DATA_ADDRESS is the address of a triggered watchpoint.
++   A match with an existing watchpoint will cause that watchpoint
++   to be marked as triggered.
++
++   This function is only used for platforms where a watchpoint
++   triggers prior to the data being accessed.  */
++
++void
++mark_triggered_watchpoints (CORE_ADDR stopped_data_address)
++{
++  struct breakpoint *b, *temp;
++  CORE_ADDR addr = stopped_data_address;
++  struct value *v;
++  
++  ALL_BREAKPOINTS_SAFE (b, temp)
++  {
++    if (b->type == bp_hardware_watchpoint
++	|| b->type == bp_read_watchpoint
++	|| b->type == bp_access_watchpoint)
++      {
++	for (v = b->val_chain; v; v = v->next)
++	  {
++	    if (VALUE_LVAL (v) == lval_memory
++	        && ! VALUE_LAZY (v))
++	      {
++	        struct type *vtype = check_typedef (VALUE_TYPE (v));
++		    
++		if (v == b->val_chain
++		    || (TYPE_CODE (vtype) != TYPE_CODE_STRUCT
++		    && TYPE_CODE (vtype) != TYPE_CODE_ARRAY))
++		  {
++		    CORE_ADDR vaddr;
++			
++		    vaddr = VALUE_ADDRESS (v) + VALUE_OFFSET (v);
++		    /* Exact match not required.  Within range is
++		       sufficient.  */
++		    if (addr >= vaddr &&
++		        addr < vaddr + TYPE_LENGTH (VALUE_TYPE (v)))
++		      b->watchpoint_triggered = 1;
++		  }
++	      }
++	  }
++      }
++  }
++}
++
+ /* Get a bpstat associated with having just stopped at address
+    BP_ADDR in thread PTID.  STOPPED_BY_WATCHPOINT is 1 if the
+    target thinks we stopped due to a hardware watchpoint, 0 if we
+@@ -2690,82 +2818,61 @@ bpstat_stop_status (CORE_ADDR bp_addr, p
+     bs->stop = 1;
+     bs->print = 1;
+ 
+-    if (b->type == bp_watchpoint ||
+-	b->type == bp_hardware_watchpoint)
+-      {
+-	char *message = xstrprintf ("Error evaluating expression for watchpoint %d\n",
+-				    b->number);
+-	struct cleanup *cleanups = make_cleanup (xfree, message);
+-	int e = catch_errors (watchpoint_check, bs, message, 
+-			      RETURN_MASK_ALL);
+-	do_cleanups (cleanups);
+-	switch (e)
+-	  {
+-	  case WP_DELETED:
+-	    /* We've already printed what needs to be printed.  */
+-	    /* Actually this is superfluous, because by the time we
+-               call print_it_typical() the wp will be already deleted,
+-               and the function will return immediately. */
+-	    bs->print_it = print_it_done;
+-	    /* Stop.  */
+-	    break;
+-	  case WP_VALUE_CHANGED:
+-	    /* Stop.  */
+-	    ++(b->hit_count);
+-	    break;
+-	  case WP_VALUE_NOT_CHANGED:
+-	    /* Don't stop.  */
+-	    bs->print_it = print_it_noop;
+-	    bs->stop = 0;
+-	    continue;
+-	  default:
+-	    /* Can't happen.  */
+-	    /* FALLTHROUGH */
+-	  case 0:
+-	    /* Error from catch_errors.  */
+-	    printf_filtered ("Watchpoint %d deleted.\n", b->number);
+-	    if (b->related_breakpoint)
+-	      b->related_breakpoint->disposition = disp_del_at_next_stop;
+-	    b->disposition = disp_del_at_next_stop;
+-	    /* We've already printed what needs to be printed.  */
+-	    bs->print_it = print_it_done;
+-
+-	    /* Stop.  */
+-	    break;
+-	  }
+-      }
+-    else if (b->type == bp_read_watchpoint || 
+-	     b->type == bp_access_watchpoint)
++    if (b->type == bp_watchpoint
++	     || b->type == bp_read_watchpoint 
++	     || b->type == bp_access_watchpoint
++	     || b->type == bp_hardware_watchpoint)
+       {
+ 	CORE_ADDR addr;
+ 	struct value *v;
+-	int found = 0;
++	int must_check_value = 0;
+ 
+-	if (!target_stopped_data_address (&current_target, &addr))
+-	  continue;
+-	for (v = b->val_chain; v; v = v->next)
++	if (b->type == bp_watchpoint
++	    || b->watchpoint_triggered
++	    || (b->type == bp_hardware_watchpoint
++		&& !target_stopped_data_address_p (&current_target)))
+ 	  {
+-	    if (VALUE_LVAL (v) == lval_memory
+-		&& ! VALUE_LAZY (v))
++	    /* We either have a software watchpoint, a triggered watchpoint 
++	       which we have stepped over, or we cannot ascertain what data 
++	       address causes a write watchpoint.  In all these
++	       cases, we must check the watchpoint value.  */
++	    b->watchpoint_triggered = 0;
++	    must_check_value = 1;
++	  }
++	else
++	  {
++	    /* At this point, we know target_stopped_data_address () works or 
++	       we have a read or access watchpoint and have no alternatives.  */
++	    if (!target_stopped_data_address (&current_target, &addr))
+ 	      {
+-		struct type *vtype = check_typedef (VALUE_TYPE (v));
+-
+-		if (v == b->val_chain
+-		    || (TYPE_CODE (vtype) != TYPE_CODE_STRUCT
+-			&& TYPE_CODE (vtype) != TYPE_CODE_ARRAY))
++		bs->print_it = print_it_noop;
++		bs->stop = 0;
++		continue;
++	      }
++	    for (v = b->val_chain; v; v = v->next)
++	      {
++		if (VALUE_LVAL (v) == lval_memory
++		    && ! VALUE_LAZY (v))
+ 		  {
+-		    CORE_ADDR vaddr;
+-
+-		    vaddr = VALUE_ADDRESS (v) + VALUE_OFFSET (v);
+-		    /* Exact match not required.  Within range is
+-                       sufficient.  */
+-		    if (addr >= vaddr &&
+-			addr < vaddr + TYPE_LENGTH (VALUE_TYPE (v)))
+-		      found = 1;
++		    struct type *vtype = check_typedef (VALUE_TYPE (v));
++		    
++		    if (v == b->val_chain
++			|| (TYPE_CODE (vtype) != TYPE_CODE_STRUCT
++			    && TYPE_CODE (vtype) != TYPE_CODE_ARRAY))
++		      {
++			CORE_ADDR vaddr;
++			
++			vaddr = VALUE_ADDRESS (v) + VALUE_OFFSET (v);
++			/* Exact match not required.  Within range is
++			   sufficient.  */
++			if (addr >= vaddr &&
++			    addr < vaddr + TYPE_LENGTH (VALUE_TYPE (v)))
++			  must_check_value = 1;
++		      }
+ 		  }
+ 	      }
+ 	  }
+-	if (found)
++	if (must_check_value)
+ 	  {
+ 	    char *message = xstrprintf ("Error evaluating expression for watchpoint %d\n",
+ 					b->number);
+@@ -2794,6 +2901,15 @@ bpstat_stop_status (CORE_ADDR bp_addr, p
+ 		break;
+ 	      case WP_VALUE_NOT_CHANGED:
+ 		/* Stop.  */
++		if (b->type == bp_hardware_watchpoint
++		    || b->type == bp_watchpoint)
++		  {
++		    /* Don't stop: write watchpoints shouldn't fire if
++		       the value hasn't changed.  */
++		    bs->print_it = print_it_noop;
++		    bs->stop = 0;
++		    continue;
++		  }
+ 		++(b->hit_count);
+ 		break;
+ 	      default:
+@@ -2809,7 +2925,7 @@ bpstat_stop_status (CORE_ADDR bp_addr, p
+ 		break;
+ 	      }
+ 	  }
+-	else	/* found == 0 */
++	else	/* must_check_value == 0 */
+ 	  {
+ 	    /* This is a case where some watchpoint(s) triggered,
+ 	       but not at the address of this watchpoint (FOUND
+@@ -4091,6 +4207,7 @@ set_raw_breakpoint (struct symtab_and_li
+   b->exec_pathname = NULL;
+   b->ops = NULL;
+   b->pending = 0;
++  b->watchpoint_triggered = 0;
+ 
+   /* Add this breakpoint to the end of the chain
+      so that a list of breakpoints will come out in order
+@@ -5449,169 +5566,6 @@ gdb_breakpoint (char *address, char *con
+ }
+ 
+ 
+-static void
+-break_at_finish_at_depth_command_1 (char *arg, int flag, int from_tty)
+-{
+-  struct frame_info *frame;
+-  CORE_ADDR low, high, selected_pc = 0;
+-  char *extra_args = NULL;
+-  char *level_arg;
+-  int extra_args_len = 0, if_arg = 0;
+-
+-  if (!arg ||
+-      (arg[0] == 'i' && arg[1] == 'f' && (arg[2] == ' ' || arg[2] == '\t')))
+-    {
+-
+-      if (default_breakpoint_valid)
+-	{
+-	  if (deprecated_selected_frame)
+-	    {
+-	      selected_pc = get_frame_pc (deprecated_selected_frame);
+-	      if (arg)
+-		if_arg = 1;
+-	    }
+-	  else
+-	    error ("No selected frame.");
+-	}
+-      else
+-	error ("No default breakpoint address now.");
+-    }
+-  else
+-    {
+-      extra_args = strchr (arg, ' ');
+-      if (extra_args)
+-	{
+-	  extra_args++;
+-	  extra_args_len = strlen (extra_args);
+-	  level_arg = (char *) xmalloc (extra_args - arg);
+-	  strncpy (level_arg, arg, extra_args - arg - 1);
+-	  level_arg[extra_args - arg - 1] = '\0';
+-	}
+-      else
+-	{
+-	  level_arg = (char *) xmalloc (strlen (arg) + 1);
+-	  strcpy (level_arg, arg);
+-	}
+-
+-      frame = parse_frame_specification (level_arg);
+-      if (frame)
+-	selected_pc = get_frame_pc (frame);
+-      else
+-	selected_pc = 0;
+-    }
+-  if (if_arg)
+-    {
+-      extra_args = arg;
+-      extra_args_len = strlen (arg);
+-    }
+-
+-  if (selected_pc)
+-    {
+-      if (find_pc_partial_function (selected_pc, (char **) NULL, &low, &high))
+-	{
+-	  char *addr_string;
+-	  if (extra_args_len)
+-	    addr_string = xstrprintf ("*0x%s %s", paddr_nz (high), extra_args);
+-	  else
+-	    addr_string = xstrprintf ("*0x%s", paddr_nz (high));
+-	  break_command_1 (addr_string, flag, from_tty, NULL);
+-	  xfree (addr_string);
+-	}
+-      else
+-	error ("No function contains the specified address");
+-    }
+-  else
+-    error ("Unable to set breakpoint at procedure exit");
+-}
+-
+-
+-static void
+-break_at_finish_command_1 (char *arg, int flag, int from_tty)
+-{
+-  char *addr_string, *break_string, *beg_addr_string;
+-  CORE_ADDR low, high;
+-  struct symtabs_and_lines sals;
+-  struct symtab_and_line sal;
+-  struct cleanup *old_chain;
+-  char *extra_args = NULL;
+-  int extra_args_len = 0;
+-  int i, if_arg = 0;
+-
+-  if (!arg ||
+-      (arg[0] == 'i' && arg[1] == 'f' && (arg[2] == ' ' || arg[2] == '\t')))
+-    {
+-      if (default_breakpoint_valid)
+-	{
+-	  if (deprecated_selected_frame)
+-	    {
+-	      addr_string = xstrprintf ("*0x%s",
+-					paddr_nz (get_frame_pc (deprecated_selected_frame)));
+-	      if (arg)
+-		if_arg = 1;
+-	    }
+-	  else
+-	    error ("No selected frame.");
+-	}
+-      else
+-	error ("No default breakpoint address now.");
+-    }
+-  else
+-    {
+-      addr_string = (char *) xmalloc (strlen (arg) + 1);
+-      strcpy (addr_string, arg);
+-    }
+-
+-  if (if_arg)
+-    {
+-      extra_args = arg;
+-      extra_args_len = strlen (arg);
+-    }
+-  else if (arg)
+-    {
+-      /* get the stuff after the function name or address */
+-      extra_args = strchr (arg, ' ');
+-      if (extra_args)
+-	{
+-	  extra_args++;
+-	  extra_args_len = strlen (extra_args);
+-	}
+-    }
+-
+-  sals.sals = NULL;
+-  sals.nelts = 0;
+-
+-  beg_addr_string = addr_string;
+-  sals = decode_line_1 (&addr_string, 1, (struct symtab *) NULL, 0,
+-			(char ***) NULL, NULL);
+-
+-  xfree (beg_addr_string);
+-  old_chain = make_cleanup (xfree, sals.sals);
+-  for (i = 0; (i < sals.nelts); i++)
+-    {
+-      sal = sals.sals[i];
+-      if (find_pc_partial_function (sal.pc, (char **) NULL, &low, &high))
+-	{
+-	  break_string;
+-	  if (extra_args_len)
+-	    break_string = xstrprintf ("*0x%s %s", paddr_nz (high),
+-				       extra_args);
+-	  else
+-	    break_string = xstrprintf ("*0x%s", paddr_nz (high));
+-	  break_command_1 (break_string, flag, from_tty, NULL);
+-	  xfree (break_string);
+-	}
+-      else
+-	error ("No function contains the specified address");
+-    }
+-  if (sals.nelts > 1)
+-    {
+-      warning ("Multiple breakpoints were set.\n");
+-      warning ("Use the \"delete\" command to delete unwanted breakpoints.");
+-    }
+-  do_cleanups (old_chain);
+-}
+-
+-
+ /* Helper function for break_command_1 and disassemble_command.  */
+ 
+ void
+@@ -5668,29 +5622,11 @@ break_command (char *arg, int from_tty)
+ }
+ 
+ void
+-break_at_finish_command (char *arg, int from_tty)
+-{
+-  break_at_finish_command_1 (arg, 0, from_tty);
+-}
+-
+-void
+-break_at_finish_at_depth_command (char *arg, int from_tty)
+-{
+-  break_at_finish_at_depth_command_1 (arg, 0, from_tty);
+-}
+-
+-void
+ tbreak_command (char *arg, int from_tty)
+ {
+   break_command_1 (arg, BP_TEMPFLAG, from_tty, NULL);
+ }
+ 
+-void
+-tbreak_at_finish_command (char *arg, int from_tty)
+-{
+-  break_at_finish_command_1 (arg, BP_TEMPFLAG, from_tty);
+-}
+-
+ static void
+ hbreak_command (char *arg, int from_tty)
+ {
+--- gdb-6.3/gdb/gdbarch.c.fix	Fri Jan  7 17:09:18 2005
++++ gdb-6.3/gdb/gdbarch.c	Fri Jan  7 17:36:36 2005
+@@ -211,6 +211,7 @@ struct gdbarch
+   gdbarch_addr_bits_remove_ftype *addr_bits_remove;
+   gdbarch_smash_text_address_ftype *smash_text_address;
+   gdbarch_software_single_step_ftype *software_single_step;
++  gdbarch_single_step_through_delay_ftype *single_step_through_delay;
+   gdbarch_print_insn_ftype *print_insn;
+   gdbarch_skip_trampoline_code_ftype *skip_trampoline_code;
+   gdbarch_skip_solib_resolver_ftype *skip_solib_resolver;
+@@ -337,6 +338,7 @@ struct gdbarch startup_gdbarch =
+   0,  /* addr_bits_remove */
+   0,  /* smash_text_address */
+   0,  /* software_single_step */
++  0,  /* single_step_through_delay */
+   0,  /* print_insn */
+   0,  /* skip_trampoline_code */
+   generic_skip_solib_resolver,  /* skip_solib_resolver */
+@@ -591,6 +593,7 @@ verify_gdbarch (struct gdbarch *current_
+   /* Skip verify of addr_bits_remove, invalid_p == 0 */
+   /* Skip verify of smash_text_address, invalid_p == 0 */
+   /* Skip verify of software_single_step, has predicate */
++  /* Skip verify of single_step_through_delay, has predicate */
+   if (current_gdbarch->print_insn == 0)
+     fprintf_unfiltered (log, "\n\tprint_insn");
+   /* Skip verify of skip_trampoline_code, invalid_p == 0 */
+@@ -1516,6 +1519,12 @@ gdbarch_dump (struct gdbarch *current_gd
+   fprintf_unfiltered (file,
+                       "gdbarch_dump: short_bit = %s\n",
+                       paddr_d (current_gdbarch->short_bit));
++  fprintf_unfiltered (file,
++                      "gdbarch_dump: gdbarch_single_step_through_delay_p() = %d\n",
++                      gdbarch_single_step_through_delay_p (current_gdbarch));
++  fprintf_unfiltered (file,
++                      "gdbarch_dump: single_step_through_delay = <0x%lx>\n",
++                      (long) current_gdbarch->single_step_through_delay);
+ #ifdef SKIP_PROLOGUE
+   fprintf_unfiltered (file,
+                       "gdbarch_dump: %s # %s\n",
+@@ -3346,6 +3355,30 @@ set_gdbarch_software_single_step (struct
+ }
+ 
+ int
++gdbarch_single_step_through_delay_p (struct gdbarch *gdbarch)
++{
++  gdb_assert (gdbarch != NULL);
++  return gdbarch->single_step_through_delay != NULL;
++}
++
++int
++gdbarch_single_step_through_delay (struct gdbarch *gdbarch, struct frame_info *frame)
++{
++  gdb_assert (gdbarch != NULL);
++  gdb_assert (gdbarch->single_step_through_delay != NULL);
++  if (gdbarch_debug >= 2)
++    fprintf_unfiltered (gdb_stdlog, "gdbarch_single_step_through_delay called\n");
++  return gdbarch->single_step_through_delay (gdbarch, frame);
++}
++
++void
++set_gdbarch_single_step_through_delay (struct gdbarch *gdbarch,
++                                       gdbarch_single_step_through_delay_ftype single_step_through_delay)
++{
++  gdbarch->single_step_through_delay = single_step_through_delay;
++}
++
++int
+ gdbarch_print_insn (struct gdbarch *gdbarch, bfd_vma vma, struct disassemble_info *info)
+ {
+   gdb_assert (gdbarch != NULL);
+--- gdb-6.3/gdb/breakpoint.h.fix	Fri Jan  7 16:58:19 2005
++++ gdb-6.3/gdb/breakpoint.h	Fri Jan  7 17:04:07 2005
+@@ -397,6 +397,11 @@ struct breakpoint
+ 
+     /* Is breakpoint pending on shlib loads?  */
+     int pending;
++
++    /* Has a watchpoint been triggered?  This is only used for 
++       non-continuable watchpoints which trigger prior to the data
++       being modified.  */
++    int watchpoint_triggered;
+   };
+ 
+ /* The following stuff is an abstract data type "bpstat" ("breakpoint
+@@ -663,6 +668,14 @@ extern void tbreak_command (char *, int)
+ 
+ extern int insert_breakpoints (void);
+ 
++/* The following provides a callback mechanism to insert watchpoints
++   for a new thread.  This is needed, for example, on ia64 linux.  */
++typedef int (insert_watchpoint_ftype) (ptid_t, CORE_ADDR, int, int);
++extern int insert_watchpoints_for_new_thread (ptid_t ptid,
++					      insert_watchpoint_ftype *fn);
++
++extern void mark_triggered_watchpoints (CORE_ADDR);
++
+ extern int remove_breakpoints (void);
+ 
+ /* This function can be used to physically insert eventpoints from the
+--- gdb-6.3/gdb/linux-nat.c.fix	Fri Jan  7 16:58:27 2005
++++ gdb-6.3/gdb/linux-nat.c	Fri Jan  7 17:04:07 2005
+@@ -34,6 +34,7 @@
+ #include "gdbthread.h"
+ #include "gdbcmd.h"
+ #include "regcache.h"
++#include "observer.h"
+ #include <sys/param.h>		/* for MAXPATHLEN */
+ #include <sys/procfs.h>		/* for elf_gregset etc. */
+ #include "elf-bfd.h"		/* for elfcore_write_* */
+@@ -69,7 +70,7 @@
+ #define PTRACE_EVENT_VFORK	2
+ #define PTRACE_EVENT_CLONE	3
+ #define PTRACE_EVENT_EXEC	4
+-#define PTRACE_EVENT_VFORKDONE	5
++#define PTRACE_EVENT_VFORK_DONE	5
+ #define PTRACE_EVENT_EXIT	6
+ 
+ #endif /* PTRACE_EVENT_FORK */
+@@ -147,21 +148,50 @@ linux_tracefork_child (void)
+   ptrace (PTRACE_TRACEME, 0, 0, 0);
+   kill (getpid (), SIGSTOP);
+   fork ();
+-  exit (0);
++  _exit (0);
+ }
+ 
+-/* Determine if PTRACE_O_TRACEFORK can be used to follow fork events.  We
++/* Wrapper function for waitpid which handles EINTR.  */
++
++static int
++my_waitpid (int pid, int *status, int flags)
++{
++  int ret;
++  do
++    {
++      ret = waitpid (pid, status, flags);
++    }
++  while (ret == -1 && errno == EINTR);
++
++  return ret;
++}
++
++/* Determine if PTRACE_O_TRACEFORK can be used to follow fork events.
++
++   First, we try to enable fork tracing on ORIGINAL_PID.  If this fails,
++   we know that the feature is not available.  This may change the tracing
++   options for ORIGINAL_PID, but we'll be setting them shortly anyway.
++
++   However, if it succeeds, we don't know for sure that the feature is
++   available; old versions of PTRACE_SETOPTIONS ignored unknown options.  We
+    create a child process, attach to it, use PTRACE_SETOPTIONS to enable
+-   fork tracing, and let it fork.  If the process exits, we assume that
+-   we can't use TRACEFORK; if we get the fork notification, and we can
+-   extract the new child's PID, then we assume that we can.  */
++   fork tracing, and let it fork.  If the process exits, we assume that we
++   can't use TRACEFORK; if we get the fork notification, and we can extract
++   the new child's PID, then we assume that we can.  */
+ 
+ static void
+-linux_test_for_tracefork (void)
++linux_test_for_tracefork (int original_pid)
+ {
+   int child_pid, ret, status;
+   long second_pid;
+ 
++  linux_supports_tracefork_flag = 0;
++  linux_supports_tracevforkdone_flag = 0;
++
++  ret = ptrace (PTRACE_SETOPTIONS, original_pid, 0, PTRACE_O_TRACEFORK);
++  if (ret != 0)
++    return;
++
+   child_pid = fork ();
+   if (child_pid == -1)
+     perror_with_name ("linux_test_for_tracefork: fork");
+@@ -169,7 +199,7 @@ linux_test_for_tracefork (void)
+   if (child_pid == 0)
+     linux_tracefork_child ();
+ 
+-  ret = waitpid (child_pid, &status, 0);
++  ret = my_waitpid (child_pid, &status, 0);
+   if (ret == -1)
+     perror_with_name ("linux_test_for_tracefork: waitpid");
+   else if (ret != child_pid)
+@@ -177,13 +207,23 @@ linux_test_for_tracefork (void)
+   if (! WIFSTOPPED (status))
+     error ("linux_test_for_tracefork: waitpid: unexpected status %d.", status);
+ 
+-  linux_supports_tracefork_flag = 0;
+-
+   ret = ptrace (PTRACE_SETOPTIONS, child_pid, 0, PTRACE_O_TRACEFORK);
+   if (ret != 0)
+     {
+-      ptrace (PTRACE_KILL, child_pid, 0, 0);
+-      waitpid (child_pid, &status, 0);
++      ret = ptrace (PTRACE_KILL, child_pid, 0, 0);
++      if (ret != 0)
++	{
++	  warning ("linux_test_for_tracefork: failed to kill child");
++	  return;
++	}
++
++      ret = my_waitpid (child_pid, &status, 0);
++      if (ret != child_pid)
++	warning ("linux_test_for_tracefork: failed to wait for killed child");
++      else if (!WIFSIGNALED (status))
++	warning ("linux_test_for_tracefork: unexpected wait status 0x%x from "
++		 "killed child", status);
++
+       return;
+     }
+ 
+@@ -192,8 +232,12 @@ linux_test_for_tracefork (void)
+ 		PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORKDONE);
+   linux_supports_tracevforkdone_flag = (ret == 0);
+ 
+-  ptrace (PTRACE_CONT, child_pid, 0, 0);
+-  ret = waitpid (child_pid, &status, 0);
++  ret = ptrace (PTRACE_CONT, child_pid, 0, 0);
++  if (ret != 0)
++    warning ("linux_test_for_tracefork: failed to resume child");
++
++  ret = my_waitpid (child_pid, &status, 0);
++
+   if (ret == child_pid && WIFSTOPPED (status)
+       && status >> 16 == PTRACE_EVENT_FORK)
+     {
+@@ -204,34 +248,38 @@ linux_test_for_tracefork (void)
+ 	  int second_status;
+ 
+ 	  linux_supports_tracefork_flag = 1;
+-	  waitpid (second_pid, &second_status, 0);
+-	  ptrace (PTRACE_DETACH, second_pid, 0, 0);
++	  my_waitpid (second_pid, &second_status, 0);
++	  ret = ptrace (PTRACE_KILL, second_pid, 0, 0);
++	  if (ret != 0)
++	    warning ("linux_test_for_tracefork: failed to kill second child");
+ 	}
+     }
++  else
++    warning ("linux_test_for_tracefork: unexpected result from waitpid "
++	     "(%d, status 0x%x)", ret, status);
+ 
+-  if (WIFSTOPPED (status))
+-    {
+-      ptrace (PTRACE_DETACH, child_pid, 0, 0);
+-      waitpid (child_pid, &status, 0);
+-    }
++  ret = ptrace (PTRACE_KILL, child_pid, 0, 0);
++  if (ret != 0)
++    warning ("linux_test_for_tracefork: failed to kill child");
++  my_waitpid (child_pid, &status, 0);
+ }
+ 
+ /* Return non-zero iff we have tracefork functionality available.
+    This function also sets linux_supports_tracefork_flag.  */
+ 
+ static int
+-linux_supports_tracefork (void)
++linux_supports_tracefork (int pid)
+ {
+   if (linux_supports_tracefork_flag == -1)
+-    linux_test_for_tracefork ();
++    linux_test_for_tracefork (pid);
+   return linux_supports_tracefork_flag;
+ }
+ 
+ static int
+-linux_supports_tracevforkdone (void)
++linux_supports_tracevforkdone (int pid)
+ {
+   if (linux_supports_tracefork_flag == -1)
+-    linux_test_for_tracefork ();
++    linux_test_for_tracefork (pid);
+   return linux_supports_tracevforkdone_flag;
+ }
+ 
+@@ -242,12 +290,12 @@ linux_enable_event_reporting (ptid_t pti
+   int pid = ptid_get_pid (ptid);
+   int options;
+ 
+-  if (! linux_supports_tracefork ())
++  if (! linux_supports_tracefork (pid))
+     return;
+ 
+   options = PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACEEXEC
+     | PTRACE_O_TRACECLONE;
+-  if (linux_supports_tracevforkdone ())
++  if (linux_supports_tracevforkdone (pid))
+     options |= PTRACE_O_TRACEVFORKDONE;
+ 
+   /* Do not enable PTRACE_O_TRACEEXIT until GDB is more prepared to support
+@@ -308,13 +356,14 @@ child_follow_fork (int follow_child)
+ 
+       if (has_vforked)
+ 	{
+-	  if (linux_supports_tracevforkdone ())
++	  gdb_assert (linux_supports_tracefork_flag >= 0);
++	  if (linux_supports_tracevforkdone (0))
+ 	    {
+ 	      int status;
+ 
+ 	      ptrace (PTRACE_CONT, parent_pid, 0, 0);
+ 	      waitpid (parent_pid, &status, __WALL);
+-	      if ((status >> 16) != PTRACE_EVENT_VFORKDONE)
++	      if ((status >> 16) != PTRACE_EVENT_VFORK_DONE)
+ 		warning ("Unexpected waitpid result %06x when waiting for "
+ 			 "vfork-done", status);
+ 	    }
+@@ -476,7 +525,7 @@ linux_handle_extended_wait (int pid, int
+ int
+ child_insert_fork_catchpoint (int pid)
+ {
+-  if (! linux_supports_tracefork ())
++  if (! linux_supports_tracefork (pid))
+     error ("Your system does not support fork catchpoints.");
+ 
+   return 0;
+@@ -485,7 +534,7 @@ child_insert_fork_catchpoint (int pid)
+ int
+ child_insert_vfork_catchpoint (int pid)
+ {
+-  if (!linux_supports_tracefork ())
++  if (!linux_supports_tracefork (pid))
+     error ("Your system does not support vfork catchpoints.");
+ 
+   return 0;
+@@ -494,7 +543,7 @@ child_insert_vfork_catchpoint (int pid)
+ int
+ child_insert_exec_catchpoint (int pid)
+ {
+-  if (!linux_supports_tracefork ())
++  if (!linux_supports_tracefork (pid))
+     error ("Your system does not support exec catchpoints.");
+ 
+   return 0;
+@@ -716,6 +765,9 @@ delete_lwp (ptid_t ptid)
+   else
+     lwp_list = lp->next;
+ 
++  if (lp->saved_trap_data)
++    xfree (lp->saved_trap_data);
++
+   xfree (lp);
+ }
+ 
+@@ -1285,6 +1337,13 @@ stop_wait_callback (struct lwp_info *lp,
+ 	         user will delete or disable the breakpoint, but the
+ 	         thread will have already tripped on it.  */
+ 
++              /* Notify any observers that we have a SIGTRAP.
++                 This is needed on platforms that must save more state
++                 than just the trap.  For example, ia64 linux uses
++                 siginfo to determine if a watchpoint has occurred and
++                 this information gets trashed by a SIGSTOP.  */
++              observer_notify_sigtrap (lp);
++
+ 	      /* Now resume this LWP and get the SIGSTOP event. */
+ 	      errno = 0;
+ 	      ptrace (PTRACE_CONT, GET_LWP (lp->ptid), 0, 0);
+@@ -1960,6 +2019,14 @@ retry:
+ 		}
+ 	    }
+ 
++          /* For platforms such as ia64, a hardware watchpoint is
++             determined by looking at special information available
++	     at the time time of the trap (siginfo).  This information
++	     is not preserved if we choose to take an event on another
++	     thread and later come back to this event, thus we must
++	     notify an observer so the information can be stored.  */
++          observer_notify_sigtrap (lp);   
++
+ 	  /* Handle GNU/Linux's extended waitstatus for trace events.  */
+ 	  if (WIFSTOPPED (status) && WSTOPSIG (status) == SIGTRAP && status >> 16 != 0)
+ 	    {
+--- gdb-6.3/gdb/linux-nat.h.fix	Fri Jan  7 16:58:33 2005
++++ gdb-6.3/gdb/linux-nat.h	Fri Jan  7 17:04:07 2005
+@@ -61,6 +61,18 @@ struct lwp_info
+ 
+   /* Next LWP in list.  */
+   struct lwp_info *next;
++
++  /* Optional saved trap state for when a trap gets pushed back
++     due to multiple events occurring at the same time.  */
++  void *saved_trap_data;
++};
++
++/* Watchpoint description.  */
++struct linux_watchpoint
++{
++  CORE_ADDR addr;
++  int len;
++  int type;
+ };
+ 
+ /* Read/write to target memory via the Linux kernel's "proc file
+--- gdb-6.3/gdb/Makefile.in.fix	Fri Jan  7 16:58:42 2005
++++ gdb-6.3/gdb/Makefile.in	Fri Jan  7 17:04:07 2005
+@@ -2055,7 +2055,8 @@ ia64-aix-nat.o: ia64-aix-nat.c $(defs_h)
+ 	$(objfiles_h) $(gdb_stat_h)
+ ia64-aix-tdep.o: ia64-aix-tdep.c $(defs_h)
+ ia64-linux-nat.o: ia64-linux-nat.c $(defs_h) $(gdb_string_h) $(inferior_h) \
+-	$(target_h) $(gdbcore_h) $(regcache_h) $(gdb_wait_h) $(gregset_h)
++	$(target_h) $(gdbcore_h) $(regcache_h) $(gdb_wait_h) $(gregset_h) \
++	$(observer_h) $(linux_nat_h)
+ ia64-linux-tdep.o: ia64-linux-tdep.c $(defs_h) $(ia64_tdep_h) \
+ 	$(arch_utils_h) $(gdbcore_h) $(regcache_h)
+ ia64-tdep.o: ia64-tdep.c $(defs_h) $(inferior_h) $(gdbcore_h) \
+@@ -2437,7 +2438,7 @@ rs6000-tdep.o: rs6000-tdep.c $(defs_h) $
+ 	$(ppc_tdep_h) $(gdb_assert_h) $(dis_asm_h) $(trad_frame_h) \
+ 	$(frame_unwind_h) $(frame_base_h)
+ s390-nat.o: s390-nat.c $(defs_h) $(tm_h) $(regcache_h) $(inferior_h) \
+-	$(s390_tdep_h)
++	$(s390_tdep_h) $(observer_h) $(linux_nat_h)
+ s390-tdep.o: s390-tdep.c $(defs_h) $(arch_utils_h) $(frame_h) $(inferior_h) \
+ 	$(symtab_h) $(target_h) $(gdbcore_h) $(gdbcmd_h) $(objfiles_h) \
+ 	$(tm_h) $(__bfd_bfd_h) $(floatformat_h) $(regcache_h) \
+--- gdb-6.3/gdb/thread-db.c.fix	Fri Jan  7 16:58:49 2005
++++ gdb-6.3/gdb/thread-db.c	Fri Jan  7 17:04:07 2005
+@@ -34,6 +34,7 @@
+ #include "target.h"
+ #include "regcache.h"
+ #include "solib-svr4.h"
++#include "observer.h"
+ 
+ #ifdef HAVE_GNU_LIBC_VERSION_H
+ #include <gnu/libc-version.h>
+@@ -143,7 +144,6 @@ static void detach_thread (ptid_t ptid, 
+ #define is_thread(ptid)		(GET_THREAD (ptid) != 0)
+ 
+ #define BUILD_LWP(lwp, pid)	ptid_build (pid, lwp, 0)
+-#define BUILD_THREAD(tid, pid)	ptid_build (pid, 0, tid)
+ 
+ 
+ /* Use "struct private_thread_info" to cache thread state.  This is
+@@ -267,7 +267,7 @@ thread_get_info_callback (const td_thrha
+ 	   thread_db_err_str (err));
+ 
+   /* Fill the cache.  */
+-  thread_ptid = BUILD_THREAD (ti.ti_tid, GET_PID (inferior_ptid));
++  thread_ptid = ptid_build (GET_PID (inferior_ptid), ti.ti_lid, ti.ti_tid);
+   thread_info = find_thread_pid (thread_ptid);
+ 
+   /* In the case of a zombie thread, don't continue.  We don't want to
+@@ -385,22 +385,14 @@ thread_from_lwp (ptid_t ptid)
+ 
+   gdb_assert (thread_info && thread_info->private->ti_valid);
+ 
+-  return BUILD_THREAD (thread_info->private->ti.ti_tid, GET_PID (ptid));
++  return ptid_build (GET_PID (ptid), GET_LWP (ptid),
++		     thread_info->private->ti.ti_tid);
+ }
+ 
+ static ptid_t
+ lwp_from_thread (ptid_t ptid)
+ {
+-  struct thread_info *thread_info;
+-  ptid_t thread_ptid;
+-
+-  if (!is_thread (ptid))
+-    return ptid;
+-
+-  thread_info = find_thread_pid (ptid);
+-  thread_db_get_info (thread_info);
+-
+-  return BUILD_LWP (thread_info->private->ti.ti_lid, GET_PID (ptid));
++  return BUILD_LWP (GET_LWP (ptid), GET_PID (ptid));
+ }
+ 
+ 
+@@ -722,6 +714,7 @@ attach_thread (ptid_t ptid, const td_thr
+ {
+   struct thread_info *tp;
+   td_err_e err;
++  ptid_t new_ptid;
+ 
+   /* If we're being called after a TD_CREATE event, we may already
+      know about this thread.  There are two ways this can happen.  We
+@@ -757,11 +750,18 @@ attach_thread (ptid_t ptid, const td_thr
+   if (ti_p->ti_state == TD_THR_UNKNOWN || ti_p->ti_state == TD_THR_ZOMBIE)
+     return;			/* A zombie thread -- do not attach.  */
+ 
++  new_ptid = BUILD_LWP (ti_p->ti_lid, GET_PID (ptid));
++
+   /* Under GNU/Linux, we have to attach to each and every thread.  */
+ #ifdef ATTACH_LWP
+-  ATTACH_LWP (BUILD_LWP (ti_p->ti_lid, GET_PID (ptid)), 0);
++  ATTACH_LWP (new_ptid, 0);
+ #endif
+ 
++  /* Notify any observers of a new linux thread.  This
++     would include any linux platforms that have to insert hardware
++     watchpoints on every thread.  */
++  observer_notify_linux_new_thread (new_ptid);
++
+   /* Enable thread event reporting for this thread.  */
+   err = td_thr_event_enable_p (th_p, 1);
+   if (err != TD_OK)
+@@ -903,7 +903,7 @@ check_event (ptid_t ptid)
+       if (err != TD_OK)
+ 	error ("Cannot get thread info: %s", thread_db_err_str (err));
+ 
+-      ptid = BUILD_THREAD (ti.ti_tid, GET_PID (ptid));
++      ptid = ptid_build (GET_PID (ptid), ti.ti_lid, ti.ti_tid);
+ 
+       switch (msg.event)
+ 	{
+@@ -950,7 +950,8 @@ thread_db_wait (ptid_t ptid, struct targ
+     return pid_to_ptid (-1);
+ 
+   if (ourstatus->kind == TARGET_WAITKIND_STOPPED
+-      && ourstatus->value.sig == TARGET_SIGNAL_TRAP)
++      && (ourstatus->value.sig == TARGET_SIGNAL_TRAP
++          || ourstatus->value.sig == TARGET_SIGNAL_ILL))
+     /* Check for a thread event.  */
+     check_event (ptid);
+ 
+@@ -1175,7 +1176,7 @@ find_new_threads_callback (const td_thrh
+   if (ti.ti_state == TD_THR_UNKNOWN || ti.ti_state == TD_THR_ZOMBIE)
+     return 0;			/* A zombie -- ignore.  */
+ 
+-  ptid = BUILD_THREAD (ti.ti_tid, GET_PID (inferior_ptid));
++  ptid = ptid_build (GET_PID (inferior_ptid), ti.ti_lid, ti.ti_tid);
+ 
+   if (!in_thread_list (ptid))
+     attach_thread (ptid, th_p, &ti, 1);
+--- gdb-6.3/gdb/i386-linux-nat.c.fix	Fri Jan  7 16:59:02 2005
++++ gdb-6.3/gdb/i386-linux-nat.c	Fri Jan  7 17:04:07 2005
+@@ -617,10 +617,9 @@ i386_linux_dr_get (int regnum)
+   int tid;
+   unsigned long value;
+ 
+-  /* FIXME: kettenis/2001-01-29: It's not clear what we should do with
+-     multi-threaded processes here.  For now, pretend there is just
+-     one thread.  */
+-  tid = PIDGET (inferior_ptid);
++  tid = TIDGET (inferior_ptid);
++  if (tid == 0)
++    tid = PIDGET (inferior_ptid);
+ 
+   /* FIXME: kettenis/2001-03-27: Calling perror_with_name if the
+      ptrace call fails breaks debugging remote targets.  The correct
+@@ -645,10 +644,9 @@ i386_linux_dr_set (int regnum, unsigned 
+ {
+   int tid;
+ 
+-  /* FIXME: kettenis/2001-01-29: It's not clear what we should do with
+-     multi-threaded processes here.  For now, pretend there is just
+-     one thread.  */
+-  tid = PIDGET (inferior_ptid);
++  tid = TIDGET (inferior_ptid);
++  if (tid == 0)
++    tid = PIDGET (inferior_ptid);
+ 
+   errno = 0;
+   ptrace (PTRACE_POKEUSER, tid,
+--- gdb-6.3/gdb/ia64-linux-nat.c.fix	Fri Jan  7 16:59:11 2005
++++ gdb-6.3/gdb/ia64-linux-nat.c	Fri Jan  7 17:04:07 2005
+@@ -39,6 +39,8 @@
+ 
+ #include <asm/ptrace_offsets.h>
+ #include <sys/procfs.h>
++#include "observer.h"
++#include "linux-nat.h"
+ 
+ /* Prototypes for supply_gregset etc. */
+ #include "gregset.h"
+@@ -559,8 +561,9 @@ is_power_of_2 (int val)
+   return onecount <= 1;
+ }
+ 
+-int
+-ia64_linux_insert_watchpoint (ptid_t ptid, CORE_ADDR addr, int len, int rw)
++/* Internal routine to insert one watchpoint for a specified thread.  */
++static int
++ia64_linux_insert_one_watchpoint (ptid_t ptid, CORE_ADDR addr, int len, int rw)
+ {
+   int idx;
+   long dbr_addr, dbr_mask;
+@@ -606,8 +609,38 @@ ia64_linux_insert_watchpoint (ptid_t pti
+   return 0;
+ }
+ 
++/* Internal callback routine which can be used via iterate_over_lwps
++   to insert a specific watchpoint from all active threads.  */
++static int
++ia64_linux_insert_watchpoint_callback (struct lwp_info *lwp, void *data)
++{
++  struct linux_watchpoint *args = (struct linux_watchpoint *)data;
++
++  return ia64_linux_insert_one_watchpoint (lwp->ptid, args->addr,
++		 		     	   args->len, args->type);
++}
++
++/* Insert a watchpoint for all threads.  */
+ int
+-ia64_linux_remove_watchpoint (ptid_t ptid, CORE_ADDR addr, int len)
++ia64_linux_insert_watchpoint (ptid_t ptid, CORE_ADDR addr, int len, int rw)
++{
++  struct linux_watchpoint args;
++
++  args.addr = addr;
++  args.len = len;
++  args.type = rw;
++
++  /* For ia64, watchpoints must be inserted/removed on each thread so
++     we iterate over the lwp list.  */
++  if (iterate_over_lwps (&ia64_linux_insert_watchpoint_callback, &args))
++    return -1;
++
++  return 0;
++}
++
++/* Internal routine to remove one watchpoint for a specified thread.  */
++static int
++ia64_linux_remove_one_watchpoint (ptid_t ptid, CORE_ADDR addr, int len)
+ {
+   int idx;
+   long dbr_addr, dbr_mask;
+@@ -630,23 +663,74 @@ ia64_linux_remove_watchpoint (ptid_t pti
+   return -1;
+ }
+ 
++/* Internal callback routine which can be used via iterate_over_lwps
++   to remove a specific watchpoint from all active threads.  */
++static int
++ia64_linux_remove_watchpoint_callback (struct lwp_info *lwp, void *data)
++{
++  struct linux_watchpoint *args = (struct linux_watchpoint *)data;
++
++  return ia64_linux_remove_one_watchpoint (lwp->ptid, args->addr,
++		 		     	   args->len);
++}
++
++/* Remove a watchpoint for all threads.  */
++int
++ia64_linux_remove_watchpoint (ptid_t ptid, CORE_ADDR addr, int len)
++{
++  struct linux_watchpoint args;
++
++  args.addr = addr;
++  args.len = len;
++
++  /* For ia64, watchpoints must be inserted/removed on each thread so
++     we iterate over the lwp list.  */
++  if (iterate_over_lwps (&ia64_linux_remove_watchpoint_callback, &args))
++    return -1;
++
++  return 0;
++}
++
++/* Callback to find lwp_info struct for a given lwp.  */
++static int
++find_lwp_info (struct lwp_info *lp, void *data)
++{ 
++  int lwp = *(int *)data;
++    
++  if (lwp == TIDGET (lp->ptid))
++    return 1;
++
++  return 0;
++}
++
+ int
+ ia64_linux_stopped_data_address (CORE_ADDR *addr_p)
+ {
+   CORE_ADDR psr;
+   int tid;
+   struct siginfo siginfo;
++  struct siginfo *siginfo_p;
+   ptid_t ptid = inferior_ptid;
++  struct lwp_info *lp;
+ 
+   tid = TIDGET(ptid);
+   if (tid == 0)
+     tid = PIDGET (ptid);
+   
+   errno = 0;
+-  ptrace (PTRACE_GETSIGINFO, tid, (PTRACE_TYPE_ARG3) 0, &siginfo);
++  /* Check to see if we have already cached the siginfo for this
++     event.  */
++  lp = iterate_over_lwps (find_lwp_info, &tid);
++  if (lp && lp->saved_trap_data != NULL)
++    siginfo_p = (struct siginfo *)lp->saved_trap_data;
++  else
++    {
++      siginfo_p = &siginfo;
++      ptrace (PTRACE_GETSIGINFO, tid, (PTRACE_TYPE_ARG3) 0, siginfo_p);
++    }
+ 
+-  if (errno != 0 || siginfo.si_signo != SIGTRAP || 
+-      (siginfo.si_code & 0xffff) != 0x0004 /* TRAP_HWBKPT */)
++  if (errno != 0 || siginfo_p->si_signo != SIGTRAP || 
++      (siginfo_p->si_code & 0xffff) != 0x0004 /* TRAP_HWBKPT */)
+     return 0;
+ 
+   psr = read_register_pid (IA64_PSR_REGNUM, ptid);
+@@ -654,7 +738,7 @@ ia64_linux_stopped_data_address (CORE_AD
+                            for the next instruction */
+   write_register_pid (IA64_PSR_REGNUM, psr, ptid);
+ 
+-  *addr_p = (CORE_ADDR)siginfo.si_addr;
++  *addr_p = (CORE_ADDR)siginfo_p->si_addr;
+   return 1;
+ }
+ 
+@@ -674,3 +758,36 @@ ia64_linux_xfer_unwind_table (struct tar
+ {
+   return syscall (__NR_getunwind, readbuf, len);
+ }
++
++/* Observer function for a new thread attach.  We need to insert
++   existing watchpoints on the new thread.  */
++static void
++ia64_linux_new_thread (ptid_t ptid)
++{
++  insert_watchpoints_for_new_thread (ptid, 
++		  		     &ia64_linux_insert_one_watchpoint);
++}
++
++/* For ia64 linux, we must save the siginfo data as part of the state
++   of a queued SIGTRAP.  This is because siginfo is used to determine
++   if a watchpoint has occurred and the information will be lost if
++   a SIGSTOP is issued to the thread.  */
++void
++ia64_linux_save_sigtrap_info (void *queue_data)
++{
++  struct lwp_info *lp = (struct lwp_info *)queue_data;
++
++  if (lp->saved_trap_data == NULL)
++    lp->saved_trap_data = xmalloc (sizeof(struct siginfo));
++
++  ptrace (PTRACE_GETSIGINFO, ptid_get_lwp (lp->ptid), (PTRACE_ARG3_TYPE) 0,
++          lp->saved_trap_data);
++}
++
++void
++_initialize_ia64_linux_nat (void)
++{
++  observer_attach_linux_new_thread (ia64_linux_new_thread);
++  observer_attach_sigtrap (ia64_linux_save_sigtrap_info);
++}
++    
+--- gdb-6.3/gdb/amd64-linux-nat.c.fix	Fri Jan  7 16:59:21 2005
++++ gdb-6.3/gdb/amd64-linux-nat.c	Fri Jan  7 17:04:07 2005
+@@ -233,10 +233,9 @@ amd64_linux_dr_get (int regnum)
+   int tid;
+   unsigned long value;
+ 
+-  /* FIXME: kettenis/2001-01-29: It's not clear what we should do with
+-     multi-threaded processes here.  For now, pretend there is just
+-     one thread.  */
+-  tid = PIDGET (inferior_ptid);
++  tid = TIDGET (inferior_ptid);
++  if (tid == 0)
++    tid = PIDGET (inferior_ptid);
+ 
+   /* FIXME: kettenis/2001-03-27: Calling perror_with_name if the
+      ptrace call fails breaks debugging remote targets.  The correct
+@@ -261,10 +260,9 @@ amd64_linux_dr_set (int regnum, unsigned
+ {
+   int tid;
+ 
+-  /* FIXME: kettenis/2001-01-29: It's not clear what we should do with
+-     multi-threaded processes here.  For now, pretend there is just
+-     one thread.  */
+-  tid = PIDGET (inferior_ptid);
++  tid = TIDGET (inferior_ptid);
++  if (tid == 0)
++    tid = PIDGET (inferior_ptid);
+ 
+   errno = 0;
+   ptrace (PT_WRITE_U, tid, offsetof (struct user, u_debugreg[regnum]), value);
+--- gdb-6.3/gdb/s390-nat.c.fix	Fri Jan  7 16:59:28 2005
++++ gdb-6.3/gdb/s390-nat.c	Fri Jan  7 17:04:07 2005
+@@ -27,6 +27,8 @@
+ #include "inferior.h"
+ 
+ #include "s390-tdep.h"
++#include "linux-nat.h"
++#include "observer.h"
+ 
+ #include <asm/ptrace.h>
+ #include <sys/ptrace.h>
+@@ -112,14 +114,14 @@ fill_fpregset (fpregset_t *regp, int reg
+ 			      ((char *)regp) + regmap_fpregset[i]);
+ }
+ 
+-/* Find the TID for the current inferior thread to use with ptrace.  */
++/* Find the TID for use with ptrace.  */
+ static int
+-s390_inferior_tid (void)
++s390_tid (ptid_t ptid)
+ {
+   /* GNU/Linux LWP ID's are process ID's.  */
+-  int tid = TIDGET (inferior_ptid);
++  int tid = TIDGET (ptid);
+   if (tid == 0)
+-    tid = PIDGET (inferior_ptid); /* Not a threaded program.  */
++    tid = PIDGET (ptid); /* Not a threaded program.  */
+ 
+   return tid;
+ }
+@@ -203,7 +205,7 @@ store_fpregs (int tid, int regnum)
+ void
+ fetch_inferior_registers (int regnum)
+ {
+-  int tid = s390_inferior_tid ();
++  int tid = s390_tid (inferior_ptid);
+ 
+   if (regnum == -1 
+       || (regnum < S390_NUM_REGS && regmap_gregset[regnum] != -1))
+@@ -219,7 +221,7 @@ fetch_inferior_registers (int regnum)
+ void
+ store_inferior_registers (int regnum)
+ {
+-  int tid = s390_inferior_tid ();
++  int tid = s390_tid (inferior_ptid);
+ 
+   if (regnum == -1 
+       || (regnum < S390_NUM_REGS && regmap_gregset[regnum] != -1))
+@@ -261,7 +263,7 @@ s390_stopped_by_watchpoint (void)
+   parea.len = sizeof (per_lowcore);
+   parea.process_addr = (addr_t) & per_lowcore;
+   parea.kernel_addr = offsetof (struct user_regs_struct, per_info.lowcore);
+-  if (ptrace (PTRACE_PEEKUSR_AREA, s390_inferior_tid (), &parea) < 0)
++  if (ptrace (PTRACE_PEEKUSR_AREA, s390_tid (inferior_ptid), &parea) < 0)
+     perror_with_name ("Couldn't retrieve watchpoint status");
+ 
+   return per_lowcore.perc_storage_alteration == 1
+@@ -269,9 +271,9 @@ s390_stopped_by_watchpoint (void)
+ }
+ 
+ static void
+-s390_fix_watch_points (void)
++s390_fix_watch_points (ptid_t ptid)
+ {
+-  int tid = s390_inferior_tid ();
++  int tid = s390_tid (ptid);
+ 
+   per_struct per_info;
+   ptrace_area parea;
+@@ -308,6 +310,16 @@ s390_fix_watch_points (void)
+     perror_with_name ("Couldn't modify watchpoint status");
+ }
+ 
++/* Callback routine to use with iterate_over_lwps to insert a specified
++   watchpoint on all threads.  */
++static int
++s390_insert_watchpoint_callback (struct lwp_info *lwp, void *data)
++{
++  s390_fix_watch_points (lwp->ptid);
++  return 0;
++}
++
++/* Insert a specified watchpoint on all threads.  */
+ int
+ s390_insert_watchpoint (CORE_ADDR addr, int len)
+ {
+@@ -321,10 +333,24 @@ s390_insert_watchpoint (CORE_ADDR addr, 
+   area->next = watch_base;
+   watch_base = area;
+ 
+-  s390_fix_watch_points ();
++  /* For the S390, a watchpoint must be inserted/removed for each
++     thread so we iterate over the list of existing lwps.  */
++  if (iterate_over_lwps (&s390_insert_watchpoint_callback, NULL))
++    return -1;
++
+   return 0;
+ }
+ 
++/* Callback routine to use with iterate_over_lwps to remove a specified
++   watchpoint from all threads.  */
++static int
++s390_remove_watchpoint_callback (struct lwp_info *lwp, void *data)
++{
++  s390_fix_watch_points (lwp->ptid);
++  return 0;
++}
++
++/* Remove a specified watchpoint from all threads.  */
+ int
+ s390_remove_watchpoint (CORE_ADDR addr, int len)
+ {
+@@ -346,7 +372,11 @@ s390_remove_watchpoint (CORE_ADDR addr, 
+   *parea = area->next;
+   xfree (area);
+ 
+-  s390_fix_watch_points ();
++  /* For the S390, a watchpoint must be inserted/removed for each
++     thread so we iterate over the list of existing lwps.  */
++  if (iterate_over_lwps (&s390_remove_watchpoint_callback, NULL))
++    return -1;
++
+   return 0;
+ }
+ 
+@@ -357,3 +387,17 @@ kernel_u_size (void)
+   return sizeof (struct user);
+ }
+ 
++/* New thread observer that inserts all existing watchpoints on the
++   new thread.  */
++static void
++s390_linux_new_thread (ptid_t ptid)
++{
++  /* Add existing watchpoints to new thread.  */
++  s390_fix_watch_points (ptid);
++}
++
++void
++_initialize_s390_nat (void)
++{
++  observer_attach_linux_new_thread (s390_linux_new_thread);
++}
+--- gdb-6.3/gdb/gdbarch.sh.fix	Fri Jan  7 17:30:46 2005
++++ gdb-6.3/gdb/gdbarch.sh	Fri Jan  7 17:32:28 2005
+@@ -611,6 +611,9 @@ f:=:CORE_ADDR:smash_text_address:CORE_AD
+ # FIXME/cagney/2001-01-18: The logic is backwards.  It should be asking if the target can
+ # single step.  If not, then implement single step using breakpoints.
+ F:=:void:software_single_step:enum target_signal sig, int insert_breakpoints_p:sig, insert_breakpoints_p
++# Return non-zero if the processor is executing a delay slot and a
++# further single-step is needed before the instruction finishes.
++M::int:single_step_through_delay:struct frame_info *frame:frame
+ # FIXME: cagney/2003-08-28: Need to find a better way of selecting the
+ # disassembler.  Perhaps objdump can handle it?
+ f:TARGET_PRINT_INSN:int:print_insn:bfd_vma vma, struct disassemble_info *info:vma, info::0:
