@@ -11,7 +11,7 @@
 
 %define name 		djbdns
 %define version		1.05
-%define release		25avx
+%define release		26avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -49,8 +49,10 @@ Patch4:		dnsnamex.patch
 Patch5:		dnscache-strict-forwardonly.patch
 Patch6:		compiler-temporary-filename.patch
 Patch7:		dnscacheip-space-separator.patch
+Patch8:		djbdns-1.05-one-second.patch
 
 BuildRoot:	%{_buildroot}/%{name}-%{version}
+BuildRequires:	dietlibc-devel >= 0.28
 BuildPreReq:	shadow-utils
 
 Requires:	sh-utils, ipsvd, srv, rpm-helper
@@ -108,9 +110,10 @@ programs.
 %patch5 -p1 -b .strict
 %patch6 -p1 -b .compiler
 %patch7 -p1 -b .cacheip
+%patch8 -p1 -b .onesecond
 
-echo "gcc %{optflags}" >conf-cc
-echo "gcc -s %{optflags}" >conf-ld
+echo "diet gcc -Os -pipe `echo %{optflags} | sed 's/-fstack-protector//g'`" >conf-cc
+echo "diet gcc -Os -static -s `echo %{optflags} | sed 's/-fstack-protector//g'`" >conf-ld
 echo "%{_prefix}" >conf-home
 
 
@@ -336,6 +339,11 @@ fi
 
 
 %changelog
+* Sun Aug 21 2005 Sean P. Thomas <spt@annvix.org> 1.05-26avx
+- use dietlibc to compile; pull out -fstack-protector when doing so
+- P8: only check data.cdb at most once per second (ref
+  http://www.tinydns.org/one-second.patch)
+
 * Fri Aug 05 2005 Vincent Danen <vdanen@annvix.org> 1.05-25avx
 - use %%_buildroot
 
