@@ -1,0 +1,9 @@
+--- dot-forward-0.71/error.h.org	2003-02-01 13:39:12.000000000 -0700
++++ dot-forward-0.71/error.h	2003-02-01 13:39:12.000000000 -0700
+@@ -1,5 +1,6 @@
+ #ifndef ERROR_H
+ #define ERROR_H
++#include "errno.h"
+ 
+ extern int errno;
+ 
