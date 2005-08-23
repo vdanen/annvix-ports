@@ -1,0 +1,21 @@
+#!/bin/sh
+
+QMAILHOME=/var/qmail
+
+touch $QMAILHOME/users/assign.passwd
+touch $QMAILHOME/users/assign
+
+# create assign.nopasswd file
+( cat $QMAILHOME/users/assign.passwd && cat $QMAILHOME/users/assign ) \
+  | sort | uniq -u > $QMAILHOME/users/assign.nopasswd
+
+# create the assign file from passwd entries (using getent)
+getent passwd | $QMAILHOME/bin/qmail-pw2u > $QMAILHOME/users/assign.passwd
+
+# merge assign.nopasswd and assign.passwd in assign
+( cat $QMAILHOME/users/assign.nopasswd && cat $QMAILHOME/users/assign.passwd) \
+  | sort -k 2 | uniq | grep -v "^.$" > $QMAILHOME/users/assign
+echo "." >> $QMAILHOME/users/assign
+
+# make cdb file
+$QMAILHOME/bin/qmail-newu

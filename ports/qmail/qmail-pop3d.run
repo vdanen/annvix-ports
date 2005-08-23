@@ -1,0 +1,8 @@
+#!/bin/sh
+PASSPROG="/bin/checkpassword"
+HOSTNAME=`hostname --fqdn`
+
+exec /usr/bin/softlimit -m 3200000 \
+/usr/bin/tcpserver -v -R -c 200 0 pop3 \
+/var/qmail/bin/qmail-popup $HOSTNAME \
+$PASSPROG /var/qmail/bin/qmail-pop3d Maildir 2>&1

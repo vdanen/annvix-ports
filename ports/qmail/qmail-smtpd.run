@@ -1,0 +1,12 @@
+#!/bin/sh
+QMAILDUID=`id -u qmaild`
+NOFILESGID=`id -g qmaild`
+MAXSMTPD=`head -1 /var/qmail/control/concurrencyincoming`
+SMTPD="/var/qmail/bin/qmail-smtpd"
+RBLSMTPD="/usr/bin/rblsmtpd"
+BLACKLIST=`cat /var/qmail/control/blacklists|grep -v '^#'`
+
+exec /usr/bin/softlimit -m 3200000 \
+/usr/bin/tcpserver -v -R -p -x /etc/tcprules.d/qmail-smtp.cdb \
+-c "$MAXSMTPD" -u $QMAILDUID -g $NOFILESGID 0 smtp \
+$RBLSMTPD $BLACKLIST $SMTPD 2>&1

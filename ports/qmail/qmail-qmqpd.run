@@ -1,0 +1,8 @@
+#!/bin/sh
+QMAILDUID=`id -u qmaild`
+NOFILESGID=`id -g qmaild`
+MAXQMQPD=`head -1 /var/qmail/control/concurrencyqmqp`
+
+exec /usr/bin/softlimit -m 3200000 \
+/usr/bin/tcpserver -v -R -p -x /etc/tcprules.d/qmail-qmqp.cdb -c "$MAXQMQPD" \
+-u $QMAILDUID -g $NOFILESGID 0 628 /var/qmail/bin/qmail-qmqpd 2>&1

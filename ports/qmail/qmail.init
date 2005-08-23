@@ -1,0 +1,208 @@
+#!/bin/sh
+# /etc/rc.d/init.d/qmail
+#
+# chkconfig: 345 83 48
+# description: Start, stop, restart, reload, and otherwise signal qmail.
+#
+# script modified by Vincent Danen <vdanen@mandrakesoft.com> on July 17 2000
+# revision: 10/12/00 - added qmail-pop3d support
+#           02/25/01 - added qmail-qmqpd support
+#                    - added support for split packages
+#	    12/04/01 - added qmail-qmtpd supprot
+#           12/18/01 - source functions
+#	    08/15/02 - less verbosity, hopefully more sanity
+#
+
+# Source function library.
+if [ -f /etc/init.d/functions ]; then
+  . /etc/init.d/functions
+elif [ -f /etc/rc.d/init.d/functions ]; then
+  . /etc/rc.d/init.d/functions
+fi
+
+PATH=/var/qmail/bin:/usr/local/bin:/bin:/usr/bin
+export PATH
+
+# path to supervise
+SPATH=/var/qmail/supervise
+
+start(){
+    if [ -f /var/lock/subsys/qmail ]; then
+      echo "qmail is already running or subsys locked"
+      exit
+    fi
+    echo -n $"Starting qmail: svscan"
+    cd $SPATH
+    env - PATH="$PATH" svscan &
+    echo $! > /var/run/svscan.pid
+    RETVAL=$?
+    echo
+    touch /var/lock/subsys/qmail
+    return $RETVAL
+}
+
+stop(){
+    echo -n $"Stopping qmail: svscan"
+    echo -n $" qmail"
+    svc -dx /var/qmail/supervise/*
+    echo -n $" logging"
+    svc -dx /var/qmail/supervise/*/log
+    kill `cat /var/run/svscan.pid`
+    RETVAL=$?
+    echo
+    rm -f /var/lock/subsys/qmail
+    return $RETVAL
+}
+
+qstatus(){
+    cd $SPATH
+    svstat * */log
+    qmail-qstat
+}
+
+doqueue(){
+    echo $"Sending ALRM signal to qmail-send and clearing queue timeout values."
+    qmail-tcpok
+    svc -a $SPATH/qmail-send
+}
+
+queue(){
+    qmail-qstat
+    qmail-qread
+}
+
+reload(){
+    echo $"Sending HUP signal to qmail-send."
+    svc -h $SPATH/qmail-send
+}
+
+pause(){
+    echo $"Pausing qmail services"
+    svc -p $SPATH/qmail-send
+    svc -p $SPATH/qmail-smtpd
+    if [ -d $SPATH/qmail-pop3d ]; then
+      svc -p $SPATH/qmail-pop3d
+    fi
+    if [ -d $SPATH/qmail-qmqpd ]; then
+      svc -p $SPATH/qmail-qmqpd
+    fi
+    if [ -d $SPATH/qmail-qmtpd ]; then
+      svc -p $SPATH/qmail-qmtpd
+    fi
+}
+
+cont(){
+    echo $"Continuing qmail services"
+    svc -c $SPATH/qmail-send
+    svc -c $SPATH/qmail-smtpd
+    if [ -d $SPATH/qmail-pop3d ]; then
+      svc -c $SPATH/qmail-pop3d
+    fi
+    if [ -d $SPATH/qmail-qmqpd ]; then
+      svc -c $SPATH/qmail-qmqpd
+    fi
+    if [ -d $SPATH/qmail-qmtpd ]; then
+      svc -c $SPATH/qmail-qmtpd
+    fi
+}
+
+restart(){
+    echo $"Restarting qmail services"
+    svc -d $SPATH/qmail-smtpd
+    if [ -d $SPATH/qmail-pop3d ]; then
+      svc -d $SPATH/qmail-pop3d
+    fi
+    if [ -d $SPATH/qmail-qmqpd ]; then
+      svc -d $SPATH/qmail-qmqpd
+    fi
+    if [ -d $SPATH/qmail-qmtpd ]; then
+      svc -d $SPATH/qmail-qmtpd
+    fi
+    svc -t $SPATH/qmail-send
+    svc -u $SPATH/qmail-smtpd
+    if [ -d $SPATH/qmail-pop3d ]; then
+      svc -u $SPATH/qmail-pop3d
+    fi
+    if [ -d $SPATH/qmail-qmqpd ]; then
+      svc -u $SPATH/qmail-qmqpd
+    fi
+    if [ -d $SPATH/qmail-qmtpd ]; then
+      svc -u $SPATH/qmail-qmtpd
+    fi
+}
+
+cdb(){
+    if [ -e /etc/tcprules.d/qmail-smtp ]; then
+      tcprules /etc/tcprules.d/qmail-smtp.cdb /etc/tcprules.d/qmail-smtp.tmp < /etc/tcprules.d/qmail-smtp
+      chmod 644 /etc/tcprules.d/qmail-smtp*
+      echo "Reloaded /etc/tcprules.d/qmail-smtp."
+    fi
+    if [ -e /etc/tcprules.d/qmail-pop3 ]; then
+      tcprules /etc/tcprules.d/qmail-pop3.cdb /etc/tcprules.d/qmail-pop3.tmp < /etc/tcprules.d/qmail-pop3
+      chmod 644 /etc/tcprules.d/qmail-pop3*
+      echo "Reloaded /etc/tcprules.d/qmail-pop3."
+    fi
+    if [ -e /etc/tcprules.d/qmail-qmqp ]; then
+      tcprules /etc/tcprules.d/qmail-qmqp.cdb /etc/tcprules.d/qmail-qmqp.tmp < /etc/tcprules.d/qmail-qmqp
+      chmod 644 /etc/tcprules.d/qmail-qmqp*
+      echo "Reloaded /etc/tcprules.d/qmail-qmqp."
+    fi
+}
+
+# See how we were called.
+case "$1" in
+    start)
+	start
+	;;
+    stop)
+	stop
+	;;
+    status)
+	qstatus
+	;;
+    restart)
+	restart
+	;;
+    reload)
+	reload
+	;;
+    queue)
+	queue
+	;;
+    alarm|doqueue)
+	doqueue
+	;;
+    reload|hup)
+	reload
+	;;
+    pause)
+	pause
+	;;
+    cont)
+	cont
+	;;
+    cdb)
+	cdb
+	;;
+    help)
+	cat <<HELP
+   stop -- stops mail service (connections refused, nothing goes out)
+  start -- starts mail service (connections accepted, mail can go out)
+  pause -- temporarily stops mail service (connections accepted, nothing leaves)
+   cont -- continues paused mail service
+ status -- displays status of mail service
+    cdb -- rebuild the tcpserver cdb files
+restart -- stops and restarts services, sends qmail-send a TERM & restarts it
+doqueue -- sends qmail-send ALRM, scheduling queued messages for delivery
+ reload -- sends qmail-send HUP, rereading locals and virtualdomains
+  queue -- shows status of queue
+   alrm -- same as doqueue
+    hup -- same as reload
+HELP
+	;;
+    *)
+	echo $"Usage: $0 {start|stop|status|restart|reload|pause|cont|cdb|doqueue|queue|alrm|hup}"
+	RETVAL=1
+esac
+
+exit $RETVAL

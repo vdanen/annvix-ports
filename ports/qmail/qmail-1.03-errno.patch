@@ -1,0 +1,10 @@
+diff -ur qmail-1.03.orig/error.h qmail-1.03/error.h
+--- qmail-1.03.orig/error.h	1998-06-15 05:53:16.000000000 -0500
++++ qmail-1.03/error.h	2003-03-09 01:06:53.000000000 -0600
+@@ -1,5 +1,6 @@
+ #ifndef ERROR_H
+ #define ERROR_H
++#include "errno.h"
+ 
+ extern int errno;
+ 
