@@ -11,7 +11,7 @@
 
 %define name		iptraf
 %define version		2.7.0
-%define release		1avx
+%define release		2avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -26,7 +26,7 @@ Release:	%{release}
 License:	GPL
 URL:		http://iptraf.seul.org/
 Group:		Monitoring
-Source:		ftp://ftp.cebu.mozcom.com/pub/linux/net/%{name}-%{version}.tar.gz
+Source0:	ftp://iptraf.seul.org/pub/iptraf/%{name}-%{version}.tar.gz
 Patch0:		iptraf-2.7.0-install.patch
 
 BuildRoot:	%{_buildroot}/%{name}-%{version}
@@ -111,6 +111,9 @@ make -C src \
 
 
 %changelog
+* Tue Aug 23 2005 Ying-Hung Chen <ying@annvix.org> 2.7.0-2avx
+- fix url and add archive.md5sum
+
 * Mon Aug 15 2005 Vincent Danen <vdanen@annvix.org> 2.7.0-1avx
 - first annvix ports submission from ying
 - put iptraf in /usr/local/sbin not /usr/local/bin
