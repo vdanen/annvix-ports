@@ -13,7 +13,7 @@
 
 %define name		gdb
 %define version		6.3
-%define release		1avx
+%define release		2avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -29,7 +29,7 @@ Release:	%{release}
 License:	GPL
 URL:		http://www.gnu.org/software/gdb/
 Group:		Development/Other
-Source:		gdb-%{version}.tar.bz2
+Source0:	http://ftp.gnu.org/gnu/gdb/gdb-%{version}.tar.bz2
 # Fix sim build
 Patch1:		gdb-5.2.1-fix-sim-build.patch
 Patch2:		gdb-6.3-system-readline.patch
@@ -329,6 +329,10 @@ fi
 
 
 %changelog
+* Thu Aug 26 2005 Ying-Hung Chen <ying@annvix.org> 6.3-2avx
+- Fix Source0 link
+- Added archive.md5sum
+
 * Mon Aug 15 2005 Vincent Danen <vdanen@annvix.org> 6.3-1avx
 - first Annvix ports package; originally submitted by ying@annvix.org but I
   discarded it to use Mandriva's package as a base as it had less cleaning

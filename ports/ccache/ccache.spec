@@ -11,12 +11,12 @@
 
 %define name		ccache
 %define version		2.4
-%define release		1avx
+%define release		2avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
 %define _infodir	/usr/local/share/info
-%define _sysconfdir	/usr/local/etc
+%define _sysconfdir	/etc
 %define _docdir		/usr/local/share/doc
 
 Summary:	Compiler cache
@@ -26,7 +26,7 @@ Release:	%{release}
 License:	GPL
 URL:		http://ccache.samba.org/
 Group:		Development/Tools
-Source:		http://ccache.samba.org/ftp/ccache/ccache-%{version}.tar.gz
+Source0:	http://ccache.samba.org/ftp/ccache/ccache-%{version}.tar.gz
 
 BuildRoot:	%{_buildroot}/%{name}-%{version}
 
@@ -87,6 +87,10 @@ done
 
 
 %changelog
+* Thu Aug 25 2005 Ying-Hung Chen <ying@annvix.org> - 2.4-2avx
+- Added archive.md5sum
+- Put ccache.sh and ccache.csh to /etc/profile.d
+
 * Mon Aug 15 2005 Vincent Danen <vdanen@annvix.org> 2.4-1avx
 
 * Sat Jul 16 2005 Ying-Hung Chen <ying@annvix.org> - 2.4-1
