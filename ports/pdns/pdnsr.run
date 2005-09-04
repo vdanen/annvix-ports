@@ -1,0 +1,6 @@
+#!/bin/sh
+PATH="/sbin:/usr/sbin:/bin:/usr/bin"
+
+# this runs pdns_recursor supervised
+
+exec /sbin/chpst -u pdns /usr/sbin/pdns_recursor 2>&1

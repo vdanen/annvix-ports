@@ -1,0 +1,7 @@
+#!/bin/execlineb
+
+# logging for the pdns service
+
+/bin/foreground { /usr/bin/install -m 0700 -d -o logger -g logger /var/log/service/pdns }
+/bin/cd /var/log/service
+/sbin/chpst -u logger /sbin/svlogd -tt /var/log/service/pdns

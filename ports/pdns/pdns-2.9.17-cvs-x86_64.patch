@@ -1,0 +1,70 @@
+--- pdns-2.9.17/pdns/logger.hh.x86_64	2004-09-13 12:54:44.000000000 -0600
++++ pdns-2.9.17/pdns/logger.hh	2005-02-13 15:15:35.000000000 -0700
+@@ -1,11 +1,10 @@
+ /*
+     PowerDNS Versatile Database Driven Nameserver
+-    Copyright (C) 2002  PowerDNS.COM BV
++    Copyright (C) 2005  PowerDNS.COM BV
+ 
+     This program is free software; you can redistribute it and/or modify
+-    it under the terms of the GNU General Public License as published by
+-    the Free Software Foundation; either version 2 of the License, or
+-    (at your option) any later version.
++    it under the terms of the GNU General Public License version 2 as 
++    published by the Free Software Foundation
+ 
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+@@ -111,6 +110,8 @@
+   Logger& operator<<(const string &s);   //!< log a string
+   Logger& operator<<(int);   //!< log an int
+   Logger& operator<<(unsigned int);   //!< log an unsigned int
++  Logger& operator<<(long);   //!< log an unsigned int
++  Logger& operator<<(unsigned long);   //!< log an unsigned int
+   Logger& operator<<(Urgency);    //!< set the urgency, << style
+ 
+ #ifndef WIN32
+--- pdns-2.9.17/pdns/logger.cc.x86_64	2004-09-13 12:55:07.000000000 -0600
++++ pdns-2.9.17/pdns/logger.cc	2005-02-13 15:16:37.000000000 -0700
+@@ -1,11 +1,10 @@
+ /*
+     PowerDNS Versatile Database Driven Nameserver
+-    Copyright (C) 2002  PowerDNS.COM BV
++    Copyright (C) 2005  PowerDNS.COM BV
+ 
+     This program is free software; you can redistribute it and/or modify
+-    it under the terms of the GNU General Public License as published by
+-    the Free Software Foundation; either version 2 of the License, or
+-    (at your option) any later version.
++    it under the terms of the GNU General Public License version 2 as 
++    published by the Free Software Foundation
+ 
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+@@ -131,6 +130,26 @@
+   return *this;
+ }
+ 
++Logger& Logger::operator<<(unsigned long i)
++{
++  ostringstream tmp;
++  tmp<<i;
++
++  *this<<tmp.str();
++
++  return *this;
++}
++
++Logger& Logger::operator<<(long i)
++{
++  ostringstream tmp;
++  tmp<<i;
++
++  *this<<tmp.str();
++
++  return *this;
++}
++
+ 
+ Logger& Logger::operator<<(ostream & (&)(ostream &))
+ {

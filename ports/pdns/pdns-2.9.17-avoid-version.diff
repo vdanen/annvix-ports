@@ -1,0 +1,105 @@
+diff -Naur pdns-2.9.17/modules/geobackend/Makefile.am pdns-2.9.17.oden/modules/geobackend/Makefile.am
+--- pdns-2.9.17/modules/geobackend/Makefile.am	2004-02-26 23:43:40.000000000 +0100
++++ pdns-2.9.17.oden/modules/geobackend/Makefile.am	2005-01-12 11:44:51.352177219 +0100
+@@ -1,4 +1,4 @@
+ EXTRA_DIST=OBJECTFILES OBJECTLIBS
+ lib_LTLIBRARIES = libgeobackend.la
+ libgeobackend_la_SOURCES=geobackend.cc geobackend.hh ippreftree.cc ippreftree.hh
+-libgeobackend_la_LDFLAGS=-module
++libgeobackend_la_LDFLAGS=-avoid-version -module
+diff -Naur pdns-2.9.17/modules/gmysqlbackend/Makefile.am pdns-2.9.17.oden/modules/gmysqlbackend/Makefile.am
+--- pdns-2.9.17/modules/gmysqlbackend/Makefile.am	2002-12-19 17:28:31.000000000 +0100
++++ pdns-2.9.17.oden/modules/gmysqlbackend/Makefile.am	2005-01-12 11:44:51.353177243 +0100
+@@ -8,9 +8,4 @@
+ 		smysql.hh smysql.cc
+ 
+ 
+-libgmysqlbackend_la_LDFLAGS=-module -lmysqlclient 
+-
+-#	-Wl,-Bstatic -lpq++ -lpq -Wl,-Bdynamic -lssl -lcrypt -lcrypto
+-
+-
+-	
++libgmysqlbackend_la_LDFLAGS=-avoid-version -module -lmysqlclient 
+diff -Naur pdns-2.9.17/modules/gpgsqlbackend/Makefile.am pdns-2.9.17.oden/modules/gpgsqlbackend/Makefile.am
+--- pdns-2.9.17/modules/gpgsqlbackend/Makefile.am	2003-05-27 19:41:16.000000000 +0200
++++ pdns-2.9.17.oden/modules/gpgsqlbackend/Makefile.am	2005-01-12 11:44:51.353177243 +0100
+@@ -6,10 +6,6 @@
+ libgpgsqlbackend_la_SOURCES=gpgsqlbackend.cc gpgsqlbackend.hh \
+ 		spgsql.hh spgsql.cc
+ 
+-libgpgsqlbackend_la_LDFLAGS=@PGSQL_lib@ -Wl,-Bstatic -lpq++ -lpq \
++libgpgsqlbackend_la_LDFLAGS=-avoid-version -module @PGSQL_lib@ -Wl,-Bstatic -lpq++ -lpq \
+ 	-Wl,-Bdynamic 
+ 
+-libgpgsqlbackend_la_LIBADD=-lssl -lcrypt -lcrypto
+-
+-
+-
+diff -Naur pdns-2.9.17/modules/gsqlitebackend/Makefile.am pdns-2.9.17.oden/modules/gsqlitebackend/Makefile.am
+--- pdns-2.9.17/modules/gsqlitebackend/Makefile.am	2003-09-21 14:20:25.000000000 +0200
++++ pdns-2.9.17.oden/modules/gsqlitebackend/Makefile.am	2005-01-12 11:44:51.353177243 +0100
+@@ -8,4 +8,4 @@
+                 ssqlite.hh ssqlite.cc
+ 
+ 
+-libgsqlitebackend_la_LDFLAGS=-module -lsqlite
++libgsqlitebackend_la_LDFLAGS=-avoid-version -module -lsqlite
+diff -Naur pdns-2.9.17/modules/ldapbackend/Makefile.am pdns-2.9.17.oden/modules/ldapbackend/Makefile.am
+--- pdns-2.9.17/modules/ldapbackend/Makefile.am	2003-10-23 20:36:05.000000000 +0200
++++ pdns-2.9.17.oden/modules/ldapbackend/Makefile.am	2005-01-12 11:44:51.354177268 +0100
+@@ -6,7 +6,4 @@
+ 		powerldap.hh powerldap.cc utils.hh
+ 
+ 
+-libldapbackend_la_LIBADD=-lldap
+-
+-
+-
++libldapbackend_la_LDFLAGS=-avoid-version -module -lldap
+diff -Naur pdns-2.9.17/modules/mysqlbackend/Makefile.am pdns-2.9.17.oden/modules/mysqlbackend/Makefile.am
+--- pdns-2.9.17/modules/mysqlbackend/Makefile.am	2002-12-09 17:24:17.000000000 +0100
++++ pdns-2.9.17.oden/modules/mysqlbackend/Makefile.am	2005-01-12 11:44:51.354177268 +0100
+@@ -2,5 +2,4 @@
+ lib_LTLIBRARIES = libmysqlbackend.la 
+ EXTRA_DIST=OBJECTFILES OBJECTLIBS
+ libmysqlbackend_la_SOURCES=mysqlcbackend.cc mysqlcbackend.hh 
+-libmysqlbackend_la_LDFLAGS=@MYSQL_lib@ -lmysqlclient
+-
++libmysqlbackend_la_LDFLAGS=-avoid-version -module  @MYSQL_lib@ -lmysqlclient
+diff -Naur pdns-2.9.17/modules/pdnsbackend/Makefile.am pdns-2.9.17.oden/modules/pdnsbackend/Makefile.am
+--- pdns-2.9.17/modules/pdnsbackend/Makefile.am	2002-12-09 17:24:17.000000000 +0100
++++ pdns-2.9.17.oden/modules/pdnsbackend/Makefile.am	2005-01-12 11:44:51.354177268 +0100
+@@ -3,5 +3,4 @@
+ EXTRA_DIST=OBJECTFILES OBJECTLIBS
+ 
+ libpdnsbackend_la_SOURCES=pdnsbackend.cc pdnsbackend.hh 
+-libpdnsbackend_la_LDFLAGS=-lmysqlclient
+-
++libpdnsbackend_la_LDFLAGS=-avoid-version -module -lmysqlclient
+diff -Naur pdns-2.9.17/modules/pipebackend/Makefile.am pdns-2.9.17.oden/modules/pipebackend/Makefile.am
+--- pdns-2.9.17/modules/pipebackend/Makefile.am	2002-12-16 14:04:27.000000000 +0100
++++ pdns-2.9.17.oden/modules/pipebackend/Makefile.am	2005-01-12 11:44:51.354177268 +0100
+@@ -7,5 +7,4 @@
+ lib_LTLIBRARIES = libpipebackend.la
+ 
+ libpipebackend_la_SOURCES=pipebackend.cc pipebackend.hh coprocess.cc coprocess.hh
+-libpipebackend_la_LDFLAGS=-module
+-
++libpipebackend_la_LDFLAGS=-avoid-version -module
+diff -Naur pdns-2.9.17/modules/xdbbackend/Makefile.am pdns-2.9.17.oden/modules/xdbbackend/Makefile.am
+--- pdns-2.9.17/modules/xdbbackend/Makefile.am	2004-02-29 13:48:59.000000000 +0100
++++ pdns-2.9.17.oden/modules/xdbbackend/Makefile.am	2005-01-12 11:46:43.614878353 +0100
+@@ -4,8 +4,9 @@
+ lib_LTLIBRARIES = libxdbbackend.la
+ 
+ libxdbbackend_la_SOURCES=xdbbackend.cc xtdb.cc xtdb.hh xdb.hh xgdbm.hh
+-libxdbbackend_la_LDFLAGS=-module -ltdb
++libxdbbackend_la_LDFLAGS=-avoid-version -module  -ltdb
+ libxdbbackend_la_CXXFLAGS = $(AM_CXXFLAGS)
+ 
+ xdb_fill_SOURCES=xdb-fill.cc xtdb.cc xtdb.hh
+-xdb_fill_LDFLAGS=-ltdb
+\ No newline at end of file
++xdb_fill_LDFLAGS=-ltdb
++

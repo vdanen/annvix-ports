@@ -1,0 +1,6 @@
+#!/bin/sh
+PATH="/sbin:/usr/sbin:/bin:/usr/bin"
+
+# this runs powerdns supervised
+
+exec /usr/sbin/pdns_server 2>&1

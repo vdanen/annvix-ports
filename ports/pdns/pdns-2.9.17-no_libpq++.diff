@@ -1,0 +1,23 @@
+diff -Naur pdns-2.9.17/modules/gpgsqlbackend/Makefile.am pdns-2.9.17.oden/modules/gpgsqlbackend/Makefile.am
+--- pdns-2.9.17/modules/gpgsqlbackend/Makefile.am	2005-01-12 11:29:48.232343661 +0100
++++ pdns-2.9.17.oden/modules/gpgsqlbackend/Makefile.am	2005-01-12 11:30:47.811790177 +0100
+@@ -6,6 +6,6 @@
+ libgpgsqlbackend_la_SOURCES=gpgsqlbackend.cc gpgsqlbackend.hh \
+ 		spgsql.hh spgsql.cc
+ 
+-libgpgsqlbackend_la_LDFLAGS=-avoid-version -module @PGSQL_lib@ -Wl,-Bstatic -lpq++ -lpq \
++libgpgsqlbackend_la_LDFLAGS=-avoid-version -module @PGSQL_lib@ -Wl,-Bstatic -lpq \
+ 	-Wl,-Bdynamic 
+ 
+diff -Naur pdns-2.9.17/modules/gpgsqlbackend/Makefile.in pdns-2.9.17.oden/modules/gpgsqlbackend/Makefile.in
+--- pdns-2.9.17/modules/gpgsqlbackend/Makefile.in	2005-01-11 22:48:04.000000000 +0100
++++ pdns-2.9.17.oden/modules/gpgsqlbackend/Makefile.in	2005-01-12 11:30:54.658956359 +0100
+@@ -119,7 +119,7 @@
+ 		spgsql.hh spgsql.cc
+ 
+ 
+-libgpgsqlbackend_la_LDFLAGS = @PGSQL_lib@ -Wl,-Bstatic -lpq++ -lpq \
++libgpgsqlbackend_la_LDFLAGS = @PGSQL_lib@ -Wl,-Bstatic -lpq \
+ 	-Wl,-Bdynamic 
+ 
+ 
