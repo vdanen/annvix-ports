@@ -1,3 +1,4 @@
+#
 # spec file for ports package nano
 #
 # Ports Package for the Annvix Linux distribution: http://annvix.org/
@@ -6,6 +7,7 @@
 #
 #   spt@annvix.org
 #
+# $Id$
 
 %define name 		nano
 %define version         1.2.5
