@@ -10,8 +10,8 @@
 # $Id$
 
 %define name		joe
-%define version		3.0
-%define release		6avx
+%define version		3.3
+%define release		7avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -72,6 +72,9 @@ export CFLAGS="%{optflags} -DUSE_LOCALE"
 
 
 %changelog
+* Fri Aug 05 2005 Sean P. Thomas <spt@annvix.org> 3.3-7avx
+- New version 3.3
+
 * Fri Aug 05 2005 Vincent Danen <vdanen@annvix.org> 3.0-6avx
 - use %%_buildroot
 
