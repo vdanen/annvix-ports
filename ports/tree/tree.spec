@@ -10,8 +10,8 @@
 # $Id$
 
 %define name		tree
-%define version		1.4b3
-%define release		5avx
+%define version		1.5.0
+%define release		6avx
 
 %define _prefix		/usr/local
 %define _mandir		/usr/local/share/man
@@ -38,7 +38,7 @@ utility.
 
 
 %prep
-%setup -q -n %{name}-1.4
+%setup -q -n %{name}-%{version}
 %patch0 -p1
 
 
@@ -68,6 +68,9 @@ make BINDIR=%{buildroot}%{_bindir} \
 
 
 %changelog
+* Mon Sep 05 2005 Sean P. Thomas <spt@annix.org> 1.5.0-6avx
+- New version 1.50
+
 * Fri Aug 05 2005 Vincent Danen <vdanen@annvix.org> 1.4b3-5avx
 - use %%_buildroot
 
