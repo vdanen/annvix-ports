@@ -1,0 +1,19 @@
+diff -urNp wget-1.8.orig/src/gen-md5.c wget-1.8/src/gen-md5.c
+--- wget-1.8.orig/src/gen-md5.c	Thu Nov 29 19:48:42 2001
++++ wget-1.8/src/gen-md5.c	Wed Dec 19 12:03:56 2001
+@@ -27,15 +27,8 @@ Foundation, Inc., 675 Mass Ave, Cambridg
+ typedef struct md5_ctx gen_md5_context_imp;
+ #endif
+ 
+-#ifdef HAVE_SOLARIS_MD5
+-# include <md5.h>
+-typedef MD5_CTX gen_md5_context_imp;
+-#endif
+-
+-#ifdef HAVE_OPENSSL_MD5
+ # include <openssl/md5.h>
+ typedef MD5_CTX gen_md5_context_imp;
+-#endif
+ 
+ struct gen_md5_context {
+   gen_md5_context_imp imp;

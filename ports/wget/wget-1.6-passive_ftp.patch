@@ -1,0 +1,24 @@
+diff -Naur wget-1.6.orig/doc/sample.wgetrc wget-1.6/doc/sample.wgetrc
+--- wget-1.6.orig/doc/sample.wgetrc	Fri Apr 21 00:06:43 2000
++++ wget-1.6/doc/sample.wgetrc	Tue Apr 10 17:51:58 2001
+@@ -39,7 +39,7 @@
+ # connections from the outside.  On these sites you have to use the
+ # `passive' feature of FTP.  If you are behind such a firewall, you
+ # can turn this on to make Wget use passive FTP by default.
+-#passive_ftp = off
++passive_ftp = on
+ 
+ # The "wait" command below makes Wget wait between every connection.
+ # If, instead, you want Wget to wait only between retries of failed
+diff -Naur wget-1.6.orig/doc/sample.wgetrc.munged_for_texi_inclusion wget-1.6/doc/sample.wgetrc.munged_for_texi_inclusion
+--- wget-1.6.orig/doc/sample.wgetrc.munged_for_texi_inclusion	Sun Dec 31 04:59:33 2000
++++ wget-1.6/doc/sample.wgetrc.munged_for_texi_inclusion	Tue Apr 10 17:52:09 2001
+@@ -39,7 +39,7 @@
+ # connections from the outside.  On these sites you have to use the
+ # `passive' feature of FTP.  If you are behind such a firewall, you
+ # can turn this on to make Wget use passive FTP by default.
+-#passive_ftp = off
++passive_ftp = on
+ 
+ # The "wait" command below makes Wget wait between every connection.
+ # If, instead, you want Wget to wait only between retries of failed

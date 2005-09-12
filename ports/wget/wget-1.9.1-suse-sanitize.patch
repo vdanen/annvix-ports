@@ -1,0 +1,45 @@
+--- wget-1.9.1/src/http.c
++++ wget-1.9.1/src/http.c
+@@ -1479,6 +1479,7 @@
+   /* Open the local file.  */
+   if (!opt.dfp)
+     {
++      sanitize_path(*hs->local_file);
+       mkalldirs (*hs->local_file);
+       if (opt.backups)
+ 	rotate_backups (*hs->local_file);
+--- wget-1.9.1/src/utils.c
++++ wget-1.9.1/src/utils.c
+@@ -554,6 +554,22 @@
+ #endif
+ }
+ 
++
++char *
++sanitize_path(char *path)
++{
++	char *str = NULL;
++
++	/* evilhost/.bashrc and evilhost/.. */
++	while ((str = strstr(path, "/.")) != NULL)
++		str[1] = '_';
++	/* .bashrc */
++	if (*path == '.')
++		*path = '_';
++	return path;
++}
++
++
+ /* Returns 0 if PATH is a directory, 1 otherwise (any kind of file).
+    Returns 0 on error.  */
+ int
+--- wget-1.9.1/src/utils.h
++++ wget-1.9.1/src/utils.h
+@@ -75,6 +75,7 @@
+ int make_directory PARAMS ((const char *));
+ char *unique_name PARAMS ((const char *, int));
+ char *file_merge PARAMS ((const char *, const char *));
++char *sanitize_path PARAMS ((char *));
+ 
+ int acceptable PARAMS ((const char *));
+ int accdir PARAMS ((const char *s, enum accd));

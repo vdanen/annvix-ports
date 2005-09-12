@@ -1,0 +1,11 @@
+--- wget-1.7.1/configure.in.rpath	Mon Nov 26 16:02:04 2001
++++ wget-1.7.1/configure.in	Mon Nov 26 16:02:37 2001
+@@ -248,7 +248,7 @@
+       SSL_INCLUDES=-I$ssl_root/include
+       dnl It's OK to use -R directly because libtool will
+       dnl interpret it for us.
+-      LDFLAGS="-L$ssl_root/lib -R$ssl_root/lib $wget_save_LDFLAGS"
++      LDFLAGS="-L$ssl_root/lib $wget_save_LDFLAGS"
+     fi
+ 
+     ssl_link_failure=no
